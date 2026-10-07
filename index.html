@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kyle 錯題速記</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-mark">錯</span>
+      <div>
+        <div class="brand-title">Kyle 錯題速記</div>
+        <div class="brand-sub">遮住答案 · 自己先答 · 翻面對照</div>
+      </div>
+    </div>
+    <div class="subject-switch" id="subjectSwitch"></div>
+  </div>
+</header>
+
+<div class="progress-wrap">
+  <div class="progress-inner">
+    <div class="progress-text">
+      <span id="progressLabel">已征服 0 / 0</span>
+      <span class="progress-stats" id="progressStats"></span>
+    </div>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+  </div>
+</div>
+
+<div class="filters" id="filters">
+  <div class="chip-row" id="topicChips"></div>
+  <div class="chip-row chip-row-small">
+    <div class="chip-group" id="kindChips"></div>
+    <div class="chip-group" id="statusChips"></div>
+    <button class="chip chip-toggle" id="shuffleBtn" type="button">🔀 隨機</button>
+  </div>
+</div>
+
+<main class="stage">
+  <div class="card" id="card">
+    <div class="card-head">
+      <div class="badges" id="cardBadges"></div>
+      <div class="card-pos" id="cardPos"></div>
+    </div>
+
+    <div class="stem" id="cardStem"></div>
+
+    <!-- 選擇題作答區 -->
+    <div class="mc-zone" id="mcZone">
+      <div class="mc-hint">先在心裡選定，再點此記錄你的答案：</div>
+      <div class="mc-options" id="mcOptions"></div>
+    </div>
+
+    <!-- 主觀題作答區 -->
+    <div class="sub-zone" id="subZone">
+      <div class="mode-switch">
+        <button type="button" class="mode-btn" data-mode="write">✏️ 紙上作答</button>
+        <button type="button" class="mode-btn" data-mode="type">⌨️ 默寫</button>
+      </div>
+      <div class="write-hint" id="writeHint">在草稿紙／平板上作答完，才好往下拉對答案 ✍️</div>
+      <textarea class="type-box" id="typeBox" rows="6"
+        placeholder="在此默寫你的答案……（自動儲存於此裝置）"></textarea>
+    </div>
+
+    <button class="reveal-btn" id="revealBtn" type="button">
+      <span class="reveal-label">顯示答案</span><span class="reveal-arrow">▾</span>
+    </button>
+
+    <div class="answer" id="answerZone">
+      <div class="ans-block ans-type" id="draftBlock" hidden>
+        <div class="ans-title">✍️ 你今次的默寫</div>
+        <div class="ans-body" id="draftBody"></div>
+      </div>
+      <div class="ans-block ans-mc-judge" id="mcJudge" hidden></div>
+
+      <div class="ans-block ans-mine">
+        <div class="ans-title">📝 你當年的答案</div>
+        <div class="ans-body" id="myBody"></div>
+      </div>
+      <div class="ans-block ans-deduct">
+        <div class="ans-title">❌ 錯因分析</div>
+        <div class="ans-body" id="deductBody"></div>
+      </div>
+      <div class="ans-block ans-correct">
+        <div class="ans-title">✅ 正解詳解</div>
+        <div class="ans-body" id="correctBody"></div>
+      </div>
+      <div class="ans-block ans-points">
+        <div class="ans-title">🎯 踩分點</div>
+        <div class="ans-body" id="pointsBody"></div>
+      </div>
+
+      <div class="rate-row">
+        <span class="rate-label">今次：</span>
+        <button class="rate-btn rate-ok" data-s="ok" type="button">✅ 答對</button>
+        <button class="rate-btn rate-half" data-s="half" type="button">～ 半對</button>
+        <button class="rate-btn rate-bad" data-s="bad" type="button">❌ 再錯</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="empty" id="emptyState" hidden>呢個篩選之下暫時冇題目。</div>
+
+  <div class="nav-row">
+    <button class="nav-btn" id="prevBtn" type="button">← 上一題</button>
+    <button class="nav-btn nav-next" id="nextBtn" type="button">下一題 →</button>
+  </div>
+
+  <div class="foot">
+    <span>作答記錄只儲存在你呢部裝置的瀏覽器內</span>
+    <button class="reset-link" id="resetBtn" type="button">清除所有記錄</button>
+  </div>
+</main>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

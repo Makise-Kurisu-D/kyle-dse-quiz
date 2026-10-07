@@ -1,0 +1,192 @@
+/* Kyle 錯題速記 —— 配色對齊錯題本 PDF：墨藍 band + 金 + 藍/紅/綠 */
+:root{
+  --ink:#1e2a3a; --ink2:#2b3a4e;
+  --gold:#b8860b; --gold-soft:#f3ead6; --gold-line:#d9b75e;
+  --blue:#1d5bb8; --blue-bg:#eaf1fb;
+  --red:#c0392b;  --red-bg:#fdeceb;
+  --green:#1e7a46;--green-bg:#e9f6ee;
+  --paper:#f4f2ec; --card:#ffffff;
+  --gray:#6b7280; --line:#e5e1d8;
+  --shadow:0 2px 10px rgba(30,42,58,.08), 0 1px 3px rgba(30,42,58,.06);
+  --radius:14px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",
+             "PingFang HK","PingFang TC",sans-serif;
+  background:var(--paper); color:var(--ink);
+  line-height:1.65; font-size:16px; padding-bottom:48px;
+}
+
+/* ---------- 頂欄 ---------- */
+.topbar{background:linear-gradient(135deg,var(--ink) 0%,var(--ink2) 100%);
+  color:#fff; position:sticky; top:0; z-index:20;
+  box-shadow:0 2px 8px rgba(0,0,0,.18)}
+.topbar-inner{max-width:760px;margin:0 auto;padding:12px 16px;
+  display:flex;align-items:center;justify-content:space-between;gap:12px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand-mark{display:grid;place-items:center;width:38px;height:38px;border-radius:9px;
+  background:linear-gradient(135deg,var(--gold-line),var(--gold));
+  color:#fff;font-weight:700;font-size:19px;flex:none;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
+.brand-title{font-size:17px;font-weight:700;letter-spacing:.5px}
+.brand-sub{font-size:11.5px;color:#c9d4e2;margin-top:1px}
+.subject-switch{display:flex;background:rgba(255,255,255,.12);
+  border-radius:9px;padding:3px;flex:none}
+.subject-switch button{border:0;background:transparent;color:#c9d4e2;
+  font-size:14px;font-weight:600;padding:6px 16px;border-radius:7px;
+  cursor:pointer;font-family:inherit}
+.subject-switch button.on{background:var(--gold);color:#fff;
+  box-shadow:0 1px 4px rgba(0,0,0,.25)}
+
+/* ---------- 進度條 ---------- */
+.progress-wrap{background:var(--ink2)}
+.progress-inner{max-width:760px;margin:0 auto;padding:0 16px 12px}
+.progress-text{display:flex;justify-content:space-between;
+  color:#e8edf4;font-size:13px;margin-bottom:5px}
+.progress-stats{color:#aebdcf;font-size:12px}
+.progress-bar{height:7px;border-radius:4px;background:rgba(255,255,255,.15);overflow:hidden}
+.progress-fill{height:100%;width:0;border-radius:4px;
+  background:linear-gradient(90deg,var(--gold-line),var(--gold));
+  transition:width .35s ease}
+
+/* ---------- 篩選 ---------- */
+.filters{max-width:760px;margin:0 auto;padding:10px 16px 2px}
+.chip-row{display:flex;gap:7px;overflow-x:auto;padding:4px 2px 8px;
+  scrollbar-width:none;white-space:nowrap}
+.chip-row::-webkit-scrollbar{display:none}
+.chip-row-small{justify-content:flex-start;align-items:center}
+.chip-group{display:flex;gap:7px;white-space:nowrap}
+.chip{border:1px solid var(--line);background:#fff;color:var(--ink2);
+  font-size:13px;padding:5px 13px;border-radius:999px;cursor:pointer;
+  font-family:inherit;flex:none;transition:all .15s}
+.chip:hover{border-color:var(--gold-line)}
+.chip.on{background:var(--ink);border-color:var(--ink);color:#fff}
+.chip-toggle.on{background:var(--gold);border-color:var(--gold);color:#fff}
+.chip .n{opacity:.55;font-size:11px;margin-left:3px}
+.chip.on .n{opacity:.8}
+
+/* ---------- 卡片 ---------- */
+.stage{max-width:760px;margin:0 auto;padding:10px 16px}
+.card{background:var(--card);border-radius:var(--radius);
+  box-shadow:var(--shadow);border:1px solid var(--line);
+  padding:20px 20px 8px;overflow:hidden}
+.card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;
+  padding-bottom:12px;margin-bottom:12px;border-bottom:1px dashed var(--line)}
+.badges{display:flex;gap:6px;flex-wrap:wrap}
+.badge{font-size:12px;font-weight:600;padding:3px 10px;border-radius:6px;
+  background:var(--gold-soft);color:var(--gold);border:1px solid var(--gold-line)}
+.badge.b-topic{background:var(--ink);color:#fff;border-color:var(--ink)}
+.badge.b-mc{background:#eef3f9;color:#3a5f8a;border-color:#d4e0ee}
+.card-pos{font-size:12px;color:var(--gray);flex:none;padding-top:2px}
+
+.stem{font-size:16.5px;line-height:1.75;margin-bottom:14px;
+  padding-left:11px;border-left:3px solid var(--gold-line)}
+
+/* MC */
+.mc-zone{margin:4px 0 14px}
+.mc-hint{font-size:12.5px;color:var(--gray);margin-bottom:8px}
+.mc-options{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
+.mc-opt{border:1.5px solid var(--line);background:#fff;border-radius:11px;
+  padding:13px 0;text-align:center;font-size:18px;font-weight:700;
+  cursor:pointer;font-family:inherit;color:var(--ink2);transition:all .12s}
+.mc-opt:hover{border-color:var(--gold-line);background:#fdfaf2}
+.mc-opt.picked{border-color:var(--blue);background:var(--blue-bg);color:var(--blue)}
+.mc-opt.correct{border-color:var(--green);background:var(--green-bg);color:var(--green)}
+.mc-opt.wrong{border-color:var(--red);background:var(--red-bg);color:var(--red)}
+.mc-opt.faded{opacity:.45}
+
+/* 主觀題作答 */
+.sub-zone{margin:2px 0 14px}
+.mode-switch{display:inline-flex;border:1px solid var(--line);
+  border-radius:9px;overflow:hidden;margin-bottom:10px}
+.mode-btn{border:0;background:#fff;padding:6px 14px;font-size:13px;
+  cursor:pointer;font-family:inherit;color:var(--gray)}
+.mode-btn + .mode-btn{border-left:1px solid var(--line)}
+.mode-btn.on{background:var(--ink2);color:#fff}
+.write-hint{border:2px dashed var(--gold-line);border-radius:11px;
+  padding:22px 16px;text-align:center;color:var(--gold);
+  background:#fdfaf2;font-size:14.5px;font-weight:600}
+.type-box{width:100%;border:1.5px solid var(--line);border-radius:11px;
+  padding:12px 14px;font-size:15.5px;line-height:1.7;font-family:inherit;
+  resize:vertical;display:none}
+.type-box:focus{outline:none;border-color:var(--gold-line);
+  box-shadow:0 0 0 3px rgba(217,183,94,.18)}
+
+/* 顯示答案 */
+.reveal-btn{width:100%;border:0;border-radius:11px;padding:14px;
+  background:linear-gradient(135deg,var(--gold-line),var(--gold));
+  color:#fff;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;
+  letter-spacing:2px;box-shadow:0 2px 6px rgba(184,134,11,.3);
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  transition:transform .1s}
+.reveal-btn:active{transform:scale(.99)}
+.reveal-arrow{transition:transform .25s}
+.reveal-btn.open .reveal-arrow{transform:rotate(180deg)}
+
+/* 答案區 */
+.answer{max-height:0;overflow:hidden;opacity:0;
+  transition:max-height .4s ease,opacity .3s ease,margin .3s}
+.answer.show{max-height:4000px;opacity:1;margin-top:14px}
+.ans-block{border-radius:11px;padding:12px 14px;margin-bottom:10px;
+  border:1px solid;font-size:14.5px;line-height:1.75}
+.ans-title{font-size:13px;font-weight:700;margin-bottom:5px;
+  display:flex;align-items:center;gap:5px}
+.ans-mine{background:var(--blue-bg);border-color:#c8dbf3}
+.ans-mine .ans-title{color:var(--blue)}
+.ans-deduct{background:var(--red-bg);border-color:#f3c7c2}
+.ans-deduct .ans-title{color:var(--red)}
+.ans-correct{background:var(--green-bg);border-color:#bfe3cd}
+.ans-correct .ans-title{color:var(--green)}
+.ans-points{background:var(--gold-soft);border-color:var(--gold-line)}
+.ans-points .ans-title{color:var(--gold)}
+.ans-type{background:#f2f3f5;border-color:#dcdfe4}
+.ans-type .ans-title{color:#4b5563}
+.ans-mc-judge{font-weight:700;font-size:15px;text-align:center;padding:11px;border-radius:11px}
+.ans-mc-judge.j-ok{background:var(--green-bg);color:var(--green);border:1px solid #bfe3cd}
+.ans-mc-judge.j-bad{background:var(--red-bg);color:var(--red);border:1px solid #f3c7c2}
+.bad-seg{background:#f8c9c4;color:#943024;border-radius:3px;padding:0 2px}
+.my-line{margin-bottom:3px}
+.my-line:last-child{margin-bottom:0}
+
+/* 自評 */
+.rate-row{display:flex;gap:8px;align-items:center;
+  padding:12px 0 14px;border-top:1px dashed var(--line);margin-top:4px}
+.rate-label{font-size:13.5px;color:var(--gray);flex:none}
+.rate-btn{flex:1;border:1.5px solid var(--line);background:#fff;
+  border-radius:10px;padding:11px 4px;font-size:14.5px;font-weight:600;
+  cursor:pointer;font-family:inherit;color:var(--gray);transition:all .12s}
+.rate-btn:hover{transform:translateY(-1px)}
+.rate-ok.on{background:var(--green);border-color:var(--green);color:#fff}
+.rate-half.on{background:var(--gold);border-color:var(--gold);color:#fff}
+.rate-bad.on{background:var(--red);border-color:var(--red);color:#fff}
+
+/* 導航 */
+.nav-row{display:flex;gap:10px;margin-top:14px}
+.nav-btn{flex:1;border:1px solid var(--line);background:#fff;border-radius:11px;
+  padding:12px;font-size:14.5px;font-weight:600;cursor:pointer;
+  font-family:inherit;color:var(--ink2)}
+.nav-btn:hover{border-color:var(--gold-line)}
+.nav-btn:disabled{opacity:.4;cursor:default}
+.nav-next{background:var(--ink);color:#fff;border-color:var(--ink)}
+.empty{text-align:center;color:var(--gray);padding:60px 0;font-size:15px}
+
+/* 底部 */
+.foot{max-width:760px;margin:22px auto 0;display:flex;justify-content:space-between;
+  align-items:center;padding:0 4px;font-size:12px;color:#9aa1ac}
+.reset-link{border:0;background:none;color:#b06a63;font-size:12px;
+  cursor:pointer;text-decoration:underline;font-family:inherit}
+
+@media (max-width:560px){
+  body{font-size:15px}
+  .brand-sub{display:none}
+  .brand-mark{width:34px;height:34px;font-size:17px}
+  .brand-title{font-size:15.5px}
+  .card{padding:16px 14px 6px;border-radius:12px}
+  .stem{font-size:16px}
+  .subject-switch button{padding:6px 13px;font-size:13.5px}
+  .rate-btn{font-size:13.5px;padding:11px 2px}
+  .mc-options{gap:7px}
+  .mc-opt{font-size:17px;padding:12px 0}
+}
