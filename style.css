@@ -83,6 +83,14 @@ body{
 
 .stem{font-size:16.5px;line-height:1.75;margin-bottom:14px;
   padding-left:11px;border-left:3px solid var(--gold-line)}
+.stem-text{font-size:16.5px;line-height:1.75;margin-bottom:14px;
+  padding-left:11px;border-left:3px solid var(--gold-line)}
+
+/* 原題裁圖 */
+.qimg-zone{margin:2px 0 14px}
+.q-img{display:block;width:100%;border:1px solid var(--line);
+  border-radius:10px;background:#fff;padding:10px 12px;
+  box-shadow:0 1px 4px rgba(30,42,58,.05)}
 
 /* MC */
 .mc-zone{margin:4px 0 14px}
@@ -141,6 +149,28 @@ body{
 .ans-correct .ans-title{color:var(--green)}
 .ans-points{background:var(--gold-soft);border-color:var(--gold-line)}
 .ans-points .ans-title{color:var(--gold)}
+
+/* 踩分點自檢清單 */
+.ans-checks{background:var(--gold-soft);border:1px solid var(--gold-line)}
+.check-cover{font-size:13.5px;font-weight:700;color:#8a6d1e;
+  margin:4px 0 10px;padding:7px 12px;border-radius:8px;
+  background:rgba(255,255,255,.55);border:1px dashed var(--gold-line)}
+.check-cover.most{color:#7a5c00;background:#fdf3d6}
+.check-cover.all{color:#1f7a3a;background:#e2f6e9;border-color:#9bd8b0;
+  border-style:solid}
+.chk-line{display:flex;gap:10px;align-items:flex-start;
+  padding:8px 10px;border-radius:8px;cursor:pointer;line-height:1.6;
+  font-size:14.5px;transition:background .12s}
+.chk-line:hover{background:rgba(255,255,255,.6)}
+.chk-line input{margin-top:4px;width:17px;height:17px;flex:none;
+  accent-color:var(--gold)}
+.chk-text b.kw{color:#926c00;font-weight:700}
+.chk-line:has(input:checked) .chk-text{color:#6f7d68;
+  text-decoration:line-through;
+  text-decoration-color:rgba(120,100,40,.45);text-decoration-thickness:1px}
+.chk-line:has(input:checked) .chk-text b.kw{color:#5a7d4a}
+mark.kw-hit{background:#ffe58a;color:inherit;border-radius:3px;
+  padding:0 2px;font-weight:700}
 .ans-type{background:#f2f3f5;border-color:#dcdfe4}
 .ans-type .ans-title{color:#4b5563}
 .ans-mc-judge{font-weight:700;font-size:15px;text-align:center;padding:11px;border-radius:11px}

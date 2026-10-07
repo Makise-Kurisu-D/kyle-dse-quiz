@@ -40,30 +40,35 @@
   </div>
 </div>
 
-<main class="stage">
+<main class="stage" id="stage">
   <div class="card" id="card">
     <div class="card-head">
       <div class="badges" id="cardBadges"></div>
       <div class="card-pos" id="cardPos"></div>
     </div>
 
-    <div class="stem" id="cardStem"></div>
+    <!-- 原題裁圖（MC） -->
+    <div class="qimg-zone" id="qimgZone" hidden>
+      <img class="q-img" id="qImg" alt="原題裁圖">
+    </div>
+    <!-- 無裁圖時的題幹文字（後備） -->
+    <div class="stem-text" id="stemText" hidden></div>
 
     <!-- 選擇題作答區 -->
-    <div class="mc-zone" id="mcZone">
+    <div class="mc-zone" id="mcZone" hidden>
       <div class="mc-hint">先在心裡選定，再點此記錄你的答案：</div>
       <div class="mc-options" id="mcOptions"></div>
     </div>
 
     <!-- 主觀題作答區 -->
-    <div class="sub-zone" id="subZone">
-      <div class="mode-switch">
+    <div class="sub-zone" id="subZone" hidden>
+      <div class="mode-switch" id="modeSwitch">
         <button type="button" class="mode-btn" data-mode="write">✏️ 紙上作答</button>
         <button type="button" class="mode-btn" data-mode="type">⌨️ 默寫</button>
       </div>
-      <div class="write-hint" id="writeHint">在草稿紙／平板上作答完，才好往下拉對答案 ✍️</div>
+      <div class="write-hint" id="writeHint">在草稿紙／平板上寫完，才好往下拉對答案 ✍️</div>
       <textarea class="type-box" id="typeBox" rows="6"
-        placeholder="在此默寫你的答案……（自動儲存於此裝置）"></textarea>
+        placeholder="在此默寫你的答案……（自動儲存於此裝置，命中踩分點關鍵詞會即時高亮）"></textarea>
     </div>
 
     <button class="reveal-btn" id="revealBtn" type="button">
@@ -89,8 +94,13 @@
         <div class="ans-title">✅ 正解詳解</div>
         <div class="ans-body" id="correctBody"></div>
       </div>
+      <div class="ans-block ans-checks" id="checksBlock" hidden>
+        <div class="ans-title">🎯 踩分點自檢（逐個打勾，看覆蓋率）</div>
+        <div class="check-cover" id="checkCover"></div>
+        <div class="check-list" id="checkList"></div>
+      </div>
       <div class="ans-block ans-points">
-        <div class="ans-title">🎯 踩分點</div>
+        <div class="ans-title">📌 評分備註</div>
         <div class="ans-body" id="pointsBody"></div>
       </div>
 
@@ -103,8 +113,6 @@
     </div>
   </div>
 
-  <div class="empty" id="emptyState" hidden>呢個篩選之下暫時冇題目。</div>
-
   <div class="nav-row">
     <button class="nav-btn" id="prevBtn" type="button">← 上一題</button>
     <button class="nav-btn nav-next" id="nextBtn" type="button">下一題 →</button>
@@ -115,6 +123,8 @@
     <button class="reset-link" id="resetBtn" type="button">清除所有記錄</button>
   </div>
 </main>
+
+<div class="empty" id="emptyState" hidden>呢個篩選之下暫時冇題目。</div>
 
 <script src="data.js"></script>
 <script src="app.js"></script>
