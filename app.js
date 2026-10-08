@@ -6,8 +6,14 @@
   var DATA = window.QUIZ_DATA;
   var LS_SESS = 'dse_quiz_sessions_v2';
   var LS_DRAFT = 'dse_quiz_draft_v2';
+  var LS_ARCHIVE = 'dse_quiz_archive_v1';
+  var LS_CYCLE = 'dse_quiz_cycle_v1';
+  // 雙週重置：以 2026-10-05（一）00:00 本地為錨，每 14 日為一輪
+  var CYCLE_MS = 14 * 24 * 3600 * 1000;
+  var CYCLE_ANCHOR = new Date(2026, 9, 5, 0, 0, 0).getTime();
 
   var sessions = load(LS_SESS, []);
+  var archive = load(LS_ARCHIVE, []);
   var drafts = load(LS_DRAFT, {});
   var SUBJECT_ORDER = ['chem', 'bio'];
   var SUBJECT_META = {
@@ -23,6 +29,35 @@
   function save() {
     localStorage.setItem(LS_SESS, JSON.stringify(sessions));
     localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
+  }
+
+  function cycleStartOf(ts) {
+    return CYCLE_ANCHOR + Math.floor((ts - CYCLE_ANCHOR) / CYCLE_MS) * CYCLE_MS;
+  }
+  function cycleEndOf(ts) { return cycleStartOf(ts) + CYCLE_MS; }
+  function allSessions() { return archive.concat(sessions); }
+
+  // 雙週換輪：舊 session 歸檔（熱力圖保留），當前進度與草稿清零（題庫保留）
+  function ensureCycle() {
+    var cur = cycleStartOf(Date.now());
+    var saved = parseInt(localStorage.getItem(LS_CYCLE) || '0', 10);
+    if (!saved) {
+      localStorage.setItem(LS_CYCLE, String(cur));
+      return false;
+    }
+    if (saved < cur) {
+      if (sessions.length) {
+        archive = archive.concat(sessions);
+        localStorage.setItem(LS_ARCHIVE, JSON.stringify(archive));
+      }
+      sessions = [];
+      drafts = {};
+      localStorage.setItem(LS_SESS, JSON.stringify([]));
+      localStorage.removeItem(LS_DRAFT);
+      localStorage.setItem(LS_CYCLE, String(cur));
+      return true;
+    }
+    return false;
   }
   function $(sel, root) { return (root || document).querySelector(sel); }
   function $all(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -188,6 +223,11 @@
             '<span><b class="c-green">' + conquered + '</b> 已征服</span>' +
             '<span><b class="c-red">' + due + '</b> 待清</span>' +
           '</div>' +
+          '<div class="hero-cycle" id="heroCycle">' +
+            '<span class="cycle-ico">🔄</span>' +
+            '<span>雙週重置：<b id="cycleTimer">—</b></span>' +
+            '<span class="cycle-note">到時進度歸零、重新征服（題庫同記錄圖保留）</span>' +
+          '</div>' +
         '</div>' +
 
         '<div class="tile-grid">' +
@@ -214,6 +254,37 @@
           '</div>' +
         '</div>' +
       '</section>';
+    startCycleTimer();
+  }
+
+  /* ---------------- 雙週倒計時 ---------------- */
+  var cycleTimerId = null;
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function cycleText(ms) {
+    var s = Math.max(0, Math.floor(ms / 1000));
+    var wk = Math.floor(s / 604800); s -= wk * 604800;
+    var dy = Math.floor(s / 86400); s -= dy * 86400;
+    var hr = Math.floor(s / 3600); s -= hr * 3600;
+    var mn = Math.floor(s / 60), sc = s % 60;
+    return wk + ' 週 ' + dy + ' 日 ' + pad2(hr) + ' 時 ' + pad2(mn) + ' 分 ' + pad2(sc) + ' 秒後刷新';
+  }
+  function startCycleTimer() {
+    clearInterval(cycleTimerId);
+    var el = $('#cycleTimer');
+    function tick() {
+      var remain = cycleEndOf(Date.now()) - Date.now();
+      if (remain <= 0) {
+        clearInterval(cycleTimerId);
+        if (ensureCycle()) {
+          toast('🔄 新嘅雙週開始，進度已重置！');
+          route();
+        }
+        return;
+      }
+      if (el) el.textContent = cycleText(remain);
+    }
+    tick();
+    cycleTimerId = setInterval(tick, 1000);
   }
   function tile(href, ico, title, desc, cls) {
     return '<a class="tile ' + cls + '" href="' + href + '">' +
@@ -661,7 +732,7 @@
   function renderRecords() {
     var latest = latestMap();
     var totalQ = SUBJECT_ORDER.reduce(function (n, c) { return n + itemsOf(c).length; }, 0);
-    var totalDone = sessions.reduce(function (n, s) {
+    var totalDone = allSessions().reduce(function (n, s) {
       return n + Object.keys(s.results).length;
     }, 0);
 
@@ -725,7 +796,7 @@
     // 近 140 日，按週列（7 格）；顏色深淺＝當日作答題數佔題庫總題數百分比
     var days = 140, totalQ = SUBJECT_ORDER.reduce(function (n, c) { return n + itemsOf(c).length; }, 0);
     var byDay = {};
-    sessions.forEach(function (s) {
+    allSessions().forEach(function (s) {
       var d = new Date(s.t); d.setHours(0, 0, 0, 0);
       var key = d.getTime();
       if (!byDay[key]) byDay[key] = { q: 0, n: 0 };
@@ -813,5 +884,8 @@
     }
   });
 
+  if (ensureCycle()) {
+    setTimeout(function () { toast('🔄 新嘅雙週開始，進度已重置！'); }, 300);
+  }
   route();
 })();
