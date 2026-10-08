@@ -122,8 +122,8 @@
     }).length;
   }
 
-  // 間隔複習：答對後按 1、3、7、14、30 日逐步拉長；未滿分則翌日再練。
-  var REVIEW_DAYS = [1, 3, 7, 14, 30];
+  // 間隔複習：配合雙週週期，最早在 15 日後提醒。
+  var REVIEW_DAYS = [15, 21, 30, 45, 60];
   function updateReviewPlan(id, result, at) {
     var previous = reviewPlan[id];
     var ratio = result.tot ? result.marks / result.tot : (result.ok ? 1 : 0);
@@ -152,6 +152,21 @@
         if (needsSeed[id]) updateReviewPlan(id, s.results[id], s.t);
       });
     });
+  }
+  function normalizeReviewPlan() {
+    var minInterval = REVIEW_DAYS[0], changed = false;
+    Object.keys(reviewPlan).forEach(function (id) {
+      var p = reviewPlan[id];
+      if (!p || typeof p.lastAt !== 'number' || typeof p.dueAt !== 'number') return;
+      var earliest = p.lastAt + minInterval * 864e5;
+      if (p.dueAt < earliest) {
+        p.level = 0;
+        p.interval = minInterval;
+        p.dueAt = earliest;
+        changed = true;
+      }
+    });
+    if (changed) localStorage.setItem(LS_REVIEW, JSON.stringify(reviewPlan));
   }
 
   // 簡體→繁體（數據裡少量簡體術語，學生默寫多為繁體；只收斂到繁體）
@@ -871,7 +886,7 @@
         '<span class="lv lv2"></span><span class="lv lv3"></span><span class="lv lv4"></span> 多（佔題庫比例）</div></div>' +
 
         '<div class="panel"><div class="panel-h-row"><h2 class="panel-h">⏰ 間隔複習（到期優先）</h2></div>' +
-          '<p class="review-note">答對後依次隔 1、3、7、14、30 日重練；未滿分則翌日再試。複習進度會跨雙週保留。</p>' +
+          '<p class="review-note">答對後依次隔 15、21、30、45、60 日重練；未滿分亦至少隔 15 日再試。複習進度會跨雙週保留。</p>' +
           '<div class="wrong-list" id="reviewDueList"></div></div>' +
 
         '<div class="panel"><div class="panel-h-row"><h2 class="panel-h">🔍 錯題複習狀態（仍錯在上、已通過嘅沉底）</h2>' +
@@ -1207,6 +1222,7 @@
   });
 
   seedReviewPlan();
+  normalizeReviewPlan();
   if (ensureCycle()) {
     setTimeout(function () { toast('🔄 新嘅雙週開始，進度已重置！'); }, 300);
   }
