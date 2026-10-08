@@ -287,11 +287,21 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
   font-weight:700;cursor:pointer;color:var(--gray);font-family:inherit}
 .seg.on{background:#fff;color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.1)}
 
-/* 熱力圖 */
+/* 熱力圖（GitHub 式月份軸＋星期軸） */
 .heat-wrap{overflow-x:auto;padding-bottom:4px}
-.heat{display:flex;gap:4px;min-width:min-content}
-.heat-col{display:flex;flex-direction:column;gap:4px}
-.cell{width:14px;height:14px;border-radius:3.5px;background:#ebe7dd;display:block}
+.heat-months{position:relative;height:18px;margin-bottom:5px;margin-left:34px}
+.hm-label{position:absolute;top:0;font-size:11px;color:var(--gray);white-space:nowrap}
+.heat-body{display:flex;gap:6px;margin-left:2px}
+.heat-dow{display:flex;flex-direction:column;gap:3px}
+.hdow{height:13px;width:26px;font-size:10px;color:var(--gray);line-height:13px}
+.hdow-empty{visibility:hidden}
+.heat-cols{display:flex;gap:3px;min-width:min-content}
+.heat-col{display:flex;flex-direction:column;gap:3px}
+.cell{width:13px;height:13px;border-radius:3px;background:#ebe7dd;display:block;
+  transition:transform .08s ease,outline-color .08s;outline:1px solid rgba(30,42,58,.04);
+  outline-offset:-1px}
+.cell[data-tip]:hover{transform:scale(1.35);outline-color:rgba(30,42,58,.35);
+  border-radius:3px;position:relative;z-index:2}
 .cell.lv1{background:#f3e2ae}
 .cell.lv2{background:#e3c46e}
 .cell.lv3{background:#cf9f35}
@@ -301,6 +311,17 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
 .heat-legend .lv{width:12px;height:12px;border-radius:3px;display:inline-block}
 .lv0{background:#ebe7dd}.lv1{background:#f3e2ae}.lv2{background:#e3c46e}
 .lv3{background:#cf9f35}.lv4{background:#8f6a12}
+
+/* 自訂 tooltip：即時跟手＋快速淡入（取代瀏覽器原生 title） */
+.heat-tip{position:fixed;z-index:200;transform:translate(0,calc(-100% - 9px));
+  background:#1e2a3a;color:#fff;font-size:11.5px;line-height:1.5;white-space:nowrap;
+  padding:7px 11px;border-radius:7px;pointer-events:none;
+  opacity:0;transition:opacity .1s ease,transform .1s ease;
+  box-shadow:0 6px 18px rgba(20,30,45,.28)}
+.heat-tip.show{opacity:1;transform:translate(0,calc(-100% - 12px))}
+.heat-tip b{color:#f0d488}
+.heat-tip::after{content:"";position:absolute;left:50%;bottom:-5px;transform:translateX(-50%);
+  border:5px solid transparent;border-top-color:#1e2a3a;border-bottom:0}
 
 /* 仍錯列表 */
 .wrong-list{display:flex;flex-direction:column;gap:9px}
@@ -350,5 +371,4 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
   .rand-grid{grid-template-columns:1fr}
   .rp-head{position:static}
   .toast{bottom:82px}
-  .cell{width:11px;height:11px}
 }

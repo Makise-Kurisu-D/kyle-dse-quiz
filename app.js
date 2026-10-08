@@ -824,9 +824,9 @@
           statCard('🔁', '上次仍錯', wrongRows.length + ' 題', wrongRows.length ? 'c-red' : 'c-green') +
         '</div>' +
 
-        '<div class="panel"><h2 class="panel-h">刷題活躍圖（近 20 週，按答題數）</h2><div id="heat"></div>' +
-        '<div class="heat-legend">0題 <span class="lv lv0"></span><span class="lv lv1"></span>' +
-        '<span class="lv lv2"></span><span class="lv lv3"></span><span class="lv lv4"></span> ≥半個題庫</div></div>' +
+        '<div class="panel"><h2 class="panel-h">刷題活躍圖（近 6 個月，按答題數）</h2><div id="heat"></div>' +
+        '<div class="heat-legend">少 <span class="lv lv0"></span><span class="lv lv1"></span>' +
+        '<span class="lv lv2"></span><span class="lv lv3"></span><span class="lv lv4"></span> 多（佔題庫比例）</div></div>' +
 
         '<div class="panel"><div class="panel-h-row"><h2 class="panel-h">🔍 查詢：上次複習仲錯嘅題</h2>' +
           '<div class="filter-seg" id="wrongFilter">' +
@@ -854,9 +854,19 @@
       '<div class="stat-lbl">' + label + '</div></div></div>';
   }
 
+  var MONTHS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function ordinal(d) {
+    if (d >= 11 && d <= 13) return d + 'th';
+    return d + (['th', 'st', 'nd', 'rd'][d % 10] || 'th');
+  }
+
+  var HEAT_CELL = 13, HEAT_GAP = 3, HEAT_STEP = HEAT_CELL + HEAT_GAP;
+
   function renderHeat() {
-    // 近 140 日，按週列（7 格）；顏色深淺＝當日作答題數佔題庫總題數百分比
-    var days = 140, totalQ = SUBJECT_ORDER.reduce(function (n, c) { return n + itemsOf(c).length; }, 0);
+    // 近 6 個月（183 日），GitHub 式：月份軸＋Mon/Wed/Fri 標籤；
+    // 顏色深淺＝當日作答題數佔題庫總題數百分比
+    var days = 183, totalQ = SUBJECT_ORDER.reduce(function (n, c) { return n + itemsOf(c).length; }, 0);
     var byDay = {};
     allSessions().forEach(function (s) {
       var d = new Date(s.t); d.setHours(0, 0, 0, 0);
@@ -874,29 +884,96 @@
     var start = new Date(today.getTime() - (days - 1) * 864e5);
     start.setDate(start.getDate() - start.getDay()); // 對齊週日
 
-    var html = '<div class="heat-wrap"><div class="heat">';
     var nCol = Math.ceil(((today.getTime() - start.getTime()) / 864e5 + 1) / 7);
+
+    // 月份標籤：該列週三（index 3）所在月與上一個標籤不同即標
+    var monthHtml = '';
+    var lastMonth = -1;
     for (var col = 0; col < nCol; col++) {
-      html += '<div class="heat-col">';
+      var mid = new Date(start.getTime() + (col * 7 + 3) * 864e5);
+      if (mid.getTime() > today.getTime()) {
+        mid = new Date(start.getTime() + col * 7 * 864e5 + 6 * 864e5);
+      }
+      var mo = mid.getMonth();
+      if (mo !== lastMonth) {
+        monthHtml += '<span class="hm-label" style="left:' + (col * HEAT_STEP) + 'px">' +
+          MONTHS_EN[mo] + '</span>';
+        lastMonth = mo;
+      }
+    }
+
+    // 星期軸：Sun..Sat，只顯示 Mon/Wed/Fri
+    var dowHtml = ['', 'Mon', '', 'Wed', '', 'Fri', ''].map(function (t) {
+      return '<span class="hdow' + (t ? '' : ' hdow-empty') + '">' + t + '</span>';
+    }).join('');
+
+    var colsHtml = '';
+    for (var c2 = 0; c2 < nCol; c2++) {
+      colsHtml += '<div class="heat-col">';
       for (var dow = 0; dow < 7; dow++) {
-        var t = start.getTime() + (col * 7 + dow) * 864e5;
+        var t = start.getTime() + (c2 * 7 + dow) * 864e5;
         var future = t > today.getTime();
         var info = byDay[t];
         var lvl = (!future && info) ? lvlOf(info.q) : 0;
-        var tip = '';
-        if (info) {
-          var dt = new Date(t);
-          var ds = dt.getFullYear() + '/' + pad(dt.getMonth() + 1) + '/' + pad(dt.getDate());
-          var pct = Math.round(info.q / totalQ * 100);
-          tip = ds + ' 刷了 ' + info.q + ' 題（佔題庫 ' + pct + '%，' + info.n + ' 次練習）';
+        var dt = new Date(t);
+        var dateLabel = MONTHS_EN[dt.getMonth()] + ' ' + ordinal(dt.getDate());
+        var detail;
+        if (future) {
+          detail = '';
+        } else if (info) {
+          detail = dateLabel + '｜刷了 <b>' + info.q + '</b> 題（' + info.n + ' 次練習）';
+        } else {
+          detail = dateLabel + '｜未刷題';
         }
-        html += '<span class="cell lv' + lvl + (future ? ' is-future' : '') + '"' +
-          (tip ? ' title="' + tip + '"' : '') + '></span>';
+        colsHtml += '<span class="cell lv' + lvl + (future ? ' is-future' : '') + '"' +
+          (detail ? ' data-tip="' + esc(detail) + '"' : '') + '></span>';
       }
-      html += '</div>';
+      colsHtml += '</div>';
     }
-    html += '</div></div>';
-    $('#heat').innerHTML = html;
+
+    $('#heat').innerHTML =
+      '<div class="heat-wrap">' +
+        '<div class="heat-months" style="width:' + (nCol * HEAT_STEP - HEAT_GAP) + 'px">' +
+          monthHtml + '</div>' +
+        '<div class="heat-body">' +
+          '<div class="heat-dow">' + dowHtml + '</div>' +
+          '<div class="heat-cols" id="heatCols" style="width:' + (nCol * HEAT_STEP - HEAT_GAP) + 'px">' +
+            colsHtml + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="heat-tip" id="heatTip" hidden></div>';
+    bindHeatTip();
+  }
+
+  function bindHeatTip() {
+    var tip = $('#heatTip');
+    var hideT = null;
+    $('#heatCols').addEventListener('mouseover', function (e) {
+      var cell = e.target.closest('.cell[data-tip]');
+      if (!cell) return;
+      clearTimeout(hideT);
+      tip.innerHTML = cell.dataset.tip;
+      tip.hidden = false;
+      requestAnimationFrame(function () { tip.classList.add('show'); });
+      moveTip(cell);
+    });
+    $('#heatCols').addEventListener('mousemove', function (e) {
+      var cell = e.target.closest('.cell[data-tip]');
+      if (cell) moveTip(cell);
+    });
+    $('#heatCols').addEventListener('mouseout', function (e) {
+      if (!e.target.closest || !e.target.closest('.cell')) return;
+      tip.classList.remove('show');
+      hideT = setTimeout(function () { tip.hidden = true; }, 130);
+    });
+    function moveTip(cell) {
+      var r = cell.getBoundingClientRect();
+      var tw = tip.offsetWidth || 150;
+      var x = r.left + r.width / 2 - tw / 2;
+      x = Math.max(8, Math.min(x, window.innerWidth - tw - 8));
+      tip.style.left = x + 'px';
+      tip.style.top = (r.top - 10) + 'px'; // CSS 用 transform: translate(0,-100%)
+    }
   }
   function pad(n) { return (n < 10 ? '0' : '') + n; }
 
