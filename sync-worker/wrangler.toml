@@ -1,0 +1,11 @@
+name = "kyle-dse-quiz-sync"
+main = "worker.js"
+compatibility_date = "2026-10-08"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "REPLACE_WITH_YOUR_CLOUDFLARE_KV_NAMESPACE_ID"
+
+[vars]
+GITHUB_CLIENT_ID = "REPLACE_AFTER_CREATING_GITHUB_APP"
+
