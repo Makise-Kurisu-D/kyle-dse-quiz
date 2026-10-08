@@ -455,12 +455,16 @@
         }
         html += answerBlocks(it, true, '');
         var checks = it.checks || [];
-        html += '<div class="chk-form" data-id="' + esc(it.id) + '" data-marks="' + marksOf(it) + '">' +
+        var wList = checks.map(function (c) { return /^✗/.test(c) ? 0 : 1; });
+        var wTot = wList.reduce(function (a, b) { return a + b; }, 0);
+        html += '<div class="chk-form" data-id="' + esc(it.id) + '" data-marks="' + marksOf(it) +
+          '" data-wtot="' + wTot + '">' +
           '<div class="chk-form-h">🎯 你寫到邊個踩分點？（剔中 ' +
-            '<span class="chk-got">0</span>/<span class="chk-tot">' + checks.length + '</span>' +
-            '　→　<b class="chk-score">0</b>/' + marksOf(it) + ' 分）</div>' +
+            '<span class="chk-got">0</span>/<span class="chk-tot">' + wTot + '</span>' +
+            '　→　<b class="chk-score">0</b>/' + marksOf(it) + ' 分；⚠️ 項只係防錯提醒，唔計分）</div>' +
           checks.map(function (c, i) {
-            return '<label class="chk-line"><input type="checkbox" data-i="' + i + '">' +
+            return '<label class="chk-line' + (wList[i] ? '' : ' is-warn') + '">' +
+              '<input type="checkbox" data-i="' + i + '" data-w="' + wList[i] + '">' +
               '<span class="chk-text">' + checkText(c) + '</span></label>';
           }).join('') + '</div>';
       }
@@ -479,14 +483,16 @@
     function recalcSub() {
       var got = 0;
       $all('.chk-form', panel).forEach(function (f) {
-        var n = $all('input:checked', f).length;
-        var tot = $all('input', f).length;
+        var n = $all('input:checked', f).reduce(function (s, cb) {
+          return s + parseInt(cb.dataset.w, 10);
+        }, 0);
+        var tot = parseInt(f.dataset.wtot, 10);
         var sc = tot ? Math.round(parseFloat(f.dataset.marks) * n / tot) : 0;
         $('.chk-got', f).textContent = n;
         $('.chk-score', f).textContent = sc;
         reviewState.results[f.dataset.id] = {
           kind: 'sub', marks: sc, tot: parseFloat(f.dataset.marks),
-          ok: sc >= parseFloat(f.dataset.marks)
+          ok: sc >= parseFloat(f.dataset.marks), got: n, checks: tot
         };
         got += sc;
       });
@@ -505,8 +511,10 @@
       items.forEach(function (it) {
         if (it.kind !== 'sub') return;
         var f = $('.chk-form[data-id="' + it.id + '"]', panel);
-        var n = $all('input:checked', f).length;
-        var tot = $all('input', f).length;
+        var n = $all('input:checked', f).reduce(function (s, cb) {
+          return s + parseInt(cb.dataset.w, 10);
+        }, 0);
+        var tot = parseInt(f.dataset.wtot, 10);
         var sc = tot ? Math.round(marksOf(it) * n / tot) : 0;
         reviewState.results[it.id] = {
           kind: 'sub', marks: sc, tot: marksOf(it), ok: sc >= marksOf(it),
@@ -541,11 +549,13 @@
   }
 
   function checkText(text) {
+    var warn = /^✗/.test(text);
+    var body = warn ? text.slice(1).trim() : text;
     var html = '';
-    text.split(/「([^」]+)」/).forEach(function (p, i) {
+    body.split(/「([^」]+)」/).forEach(function (p, i) {
       html += (i % 2 === 1) ? '<b class="kw">' + esc(p) + '</b>' : esc(p);
     });
-    return html;
+    return (warn ? '<span class="chk-warn">⚠️ 防錯：</span>' : '') + html;
   }
   function answerBlocks(it, withMine, draftHtml) {
     var h = '';

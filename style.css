@@ -207,6 +207,8 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
 .chk-line:has(input:checked) .chk-text{color:#7a8574;text-decoration:line-through;
   text-decoration-color:rgba(120,100,40,.4)}
 .chk-line:has(input:checked) .chk-text b.kw{color:#5a7d4a}
+.chk-line.is-warn .chk-text{color:#9a6a5f;font-size:13.6px}
+.chk-warn{color:var(--red);font-weight:800}
 
 .rp-head{background:var(--card);border:1px solid var(--line);border-radius:16px;
   padding:18px 22px;margin-bottom:16px;box-shadow:var(--shadow);position:sticky;top:14px;z-index:15}
