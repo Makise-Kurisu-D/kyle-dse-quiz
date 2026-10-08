@@ -110,8 +110,21 @@ b{font-weight:700}
 .soon-banner{background:var(--gold-soft);border:1px solid var(--gold-line);border-radius:14px;
   padding:26px;text-align:center;font-size:16px;margin-bottom:18px}
 
+/* ---- 隨機科目選擇 ---- */
+.rand-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;max-width:760px}
+.rand-card{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;
+  background:var(--card);border:1px solid var(--line);border-radius:18px;padding:34px 22px;
+  box-shadow:var(--shadow);transition:transform .15s,box-shadow .15s}
+.rand-card:hover{transform:translateY(-3px);box-shadow:var(--shadow-l)}
+.rand-ico{width:66px;height:66px;border-radius:18px;background:var(--green-bg);
+  display:flex;align-items:center;justify-content:center;font-size:32px}
+.rand-name{font-size:19px;font-weight:800}
+.rand-note{font-size:12.5px;color:var(--gray);line-height:1.5}
+.rand-card.is-soon{opacity:.55;cursor:not-allowed}
+
 /* ---- 科目 tab ---- */
 .subj-tabs{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap}
+.rand-tabs{margin-top:-4px}
 .subj-tab{padding:10px 20px;border-radius:12px;border:1px solid var(--line);
   background:var(--card);font-size:14.5px;font-weight:700;cursor:pointer;font-family:inherit}
 .subj-tab small{font-size:10.5px;background:#eee;color:var(--gray);border-radius:6px;
@@ -334,6 +347,7 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
   .rq{padding:15px 14px}
   .opt{width:54px;height:46px;font-size:16px}
   .stat-cards{grid-template-columns:1fr;gap:10px}
+  .rand-grid{grid-template-columns:1fr}
   .rp-head{position:static}
   .toast{bottom:82px}
   .cell{width:11px;height:11px}

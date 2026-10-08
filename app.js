@@ -172,6 +172,7 @@
     window.scrollTo(0, 0);
     if (view === 'home') return renderHome();
     if (view === 'practice') return renderPractice(parts[1] || 'chem');
+    if (view === 'random') return renderRandomPicker();
     if (view === 'session') return renderSession(parts[1], decodeURIComponent(parts[2] || ''));
     if (view === 'records') return renderRecords();
     renderHome();
@@ -233,7 +234,7 @@
         '<div class="tile-grid">' +
           tile('#/practice/chem', '✏️', '開始練習', '按課題失分由高到低排，逐個擊破', 'tile-blue') +
           tile('#/records', '📈', '做題記錄', '刷題熱力圖＋分數走勢', 'tile-gold') +
-          tile('#/session/chem/' + encodeURIComponent('__random__'), '🎲', '隨機十題', '化學錯題隨機抽 10 題速測', 'tile-green') +
+          tile('#/random', '🎲', '隨機十題', '化學／生物隨機抽 10 題速測', 'tile-green') +
         '</div>' +
 
         '<div class="home-sec">' +
@@ -360,6 +361,31 @@
       '</section>';
   }
 
+  /* ---------------- 隨機十題科目選擇 ---------------- */
+  function renderRandomPicker() {
+    var cards = SUBJECT_ORDER.concat(['math']).map(function (code) {
+      var m = SUBJECT_META[code];
+      var n = subjOf(code) ? itemsOf(code).length : 0;
+      if (code === 'math' || !n) {
+        return '<div class="rand-card is-soon">' +
+          '<div class="rand-ico">' + m.icon + '</div>' +
+          '<div class="rand-name">' + esc(m.name) + '</div>' +
+          '<div class="rand-note">題庫暫時未有題</div></div>';
+      }
+      return '<a class="rand-card" href="#/session/' + code + '/' + encodeURIComponent('__random__') + '">' +
+        '<div class="rand-ico">' + m.icon + '</div>' +
+        '<div class="rand-name">' + esc(m.name) + '</div>' +
+        '<div class="rand-note">' + n + ' 題錯題中隨機抽 10 題 →</div></a>';
+    }).join('');
+    $('#app').innerHTML =
+      '<section class="page">' +
+        '<header class="page-head"><div><h1 class="page-title">🎲 隨機十題</h1>' +
+        '<p class="page-sub">揀一科，由全部錯題隨機抽 10 題出嚟，入面仲可以隨時「換一組」。</p></div>' +
+        '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
+        '<div class="rand-grid">' + cards + '</div>' +
+      '</section>';
+  }
+
   /* ---------------- 做題會話 ---------------- */
   var reviewState = null;   // 提交後的批改結果
   var sessState = { code: null, topic: null, mcOnly: false };
@@ -379,7 +405,14 @@
   }
 
   function renderSession(code, topic, mcOnly) {
-    if (!subjOf(code) || !topic) { location.hash = '#/practice'; return; }
+    if (!topic) { location.hash = '#/practice'; return; }
+    if (code === 'math' || !subjOf(code)) {
+      $('#app').innerHTML =
+        '<section class="page"><div class="soon-banner">📐 ' + esc(SUBJECT_META[code] ? SUBJECT_META[code].name : code) +
+        ' 嘅錯題庫暫時未有題，改完好試卷就會自動出現。</div>' +
+        '<a class="btn btn-primary" href="#/random">← 返隨機十題</a></section>';
+      return;
+    }
     if (mcOnly === undefined) mcOnly = false;
     sessState = { code: code, topic: topic, mcOnly: mcOnly };
     var items = sessionItems(code, topic, mcOnly);
@@ -409,15 +442,30 @@
           '<p class="page-sub"><span id="answeredCount">0</span> / <span id="totalCount">' +
             items.length + '</span> 題已作答 · MC 自動批改，大題照踩分點自己勾分</p></div>' +
           '<div class="head-actions">' +
+            (topic === '__random__'
+              ? '<button class="btn btn-gold" id="rerollBtn" type="button">🔄 換一組十題</button>' : '') +
             '<label class="mc-toggle" title="時間唔夠就只刷選擇題，大題會收起、唔計分、唔入記錄">' +
               '<input type="checkbox" id="mcOnlyChk"' + (mcOnly ? ' checked' : '') +
                 (nMc ? '' : ' disabled') + '><span class="mc-switch"></span>' +
               '<span class="mc-toggle-lbl">⚡ 只做選擇題' +
                 (nSub ? '<small>' + nMc + ' MC / ' + nSub + ' 大題</small>' : '') + '</span>' +
             '</label>' +
-            '<a class="btn btn-ghost" href="#/practice/' + code + '">← 離開</a>' +
+            '<a class="btn btn-ghost" href="' +
+              (topic === '__random__' ? '#/random' : '#/practice/' + code) + '">← 離開</a>' +
           '</div>' +
         '</header>' +
+        (topic === '__random__'
+          ? '<div class="subj-tabs rand-tabs">' +
+              ['chem', 'bio', 'math'].map(function (c) {
+                var m = SUBJECT_META[c];
+                var n = subjOf(c) ? itemsOf(c).length : 0;
+                if (!n) return '<span class="subj-tab is-soon">' + m.icon + ' ' + m.name +
+                  '<small>未有題</small></span>';
+                return '<a class="subj-tab' + (c === code ? ' on' : '') +
+                  '" href="#/session/' + c + '/' + encodeURIComponent('__random__') + '">' +
+                  m.icon + ' ' + m.name + '</a>';
+              }).join('') +
+            '</div>' : '') +
         (mcOnly && nSub ? '<div class="mc-only-note">⚡ 已切為只做選擇題：' + nSub +
           ' 道大題已收起，今次唔使答、唔計分、唔入記錄。</div>' : '') +
         '<div class="q-paper" id="qPaper">' +
@@ -487,6 +535,20 @@
         : '✅ 全部做完，一次過提交';
     }
     updateAnswered(); submitLabel();
+
+    // 隨機十題「換一組」：清走之前未提交嘅隨機草稿，重新抽題打亂
+    var rerollBtn = $('#rerollBtn');
+    if (rerollBtn) {
+      rerollBtn.addEventListener('click', function () {
+        var pfx = code + ':__random__';
+        Object.keys(drafts).forEach(function (k) {
+          if (k.indexOf(pfx) === 0) delete drafts[k];
+        });
+        localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
+        renderSession(code, topic, sessState.mcOnly);
+        toast('🎲 已換一組新題');
+      });
+    }
 
     // 「只做選擇題」開關：課題頁就地動畫收起/展開；隨機頁重新抽 MC
     $('#mcOnlyChk').addEventListener('change', function () {
