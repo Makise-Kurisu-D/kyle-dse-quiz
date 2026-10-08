@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 15764)
+Total output lines: 1364
+
 /* Kyle 錯題本 —— 純靜態 SPA（hash 路由，localStorage 儲存，無依賴）
  * 視圖：主頁 / 練習（課題排序）/ 做題會話（一次提交、MC 自動批改、大題踩分點自改）/ 記錄（熱力圖＋仍錯查詢）
  */
@@ -136,6 +139,10 @@
       setTimeout(function () { syncNow(true); }, 600);
     }
   }
+  window.addEventListener('online', function () { syncNow(true); });
+  window.addEventListener('focus', function () {
+    if (localStorage.getItem(LS_SYNC_SESSION)) syncNow(true);
+  });
 
   function cycleStartOf(ts) {
     return CYCLE_ANCHOR + Math.floor((ts - CYCLE_ANCHOR) / CYCLE_MS) * CYCLE_MS;
@@ -655,72 +662,7 @@
             return '<button type="button" class="opt' + (picked === l ? ' picked' : '') +
               '" data-l="' + l + '">' + l + '</button>';
           }).join('') +
-        '</div>';
-    } else {
-      var v = draft.text[it.id] || '';
-      body =
-        '<div class="q-stem">' + esc(it.stem) + '</div>' +
-        '<textarea class="ans-box" data-id="' + esc(it.id) + '" rows="4" ' +
-          'placeholder="默寫答案（可留白，改用紙寫就剔下面格仔）……">' + esc(v) + '</textarea>' +
-        '<label class="paper-lbl"><input type="checkbox" class="paper-chk" data-id="' + esc(it.id) + '"' +
-          (draft.paper[it.id] ? ' checked' : '') + '> 我已喺紙上寫完</label>';
-    }
-    return '<article class="sq" data-id="' + esc(it.id) + '" data-kind="' + it.kind + '">' + head + body + '</article>';
-  }
-
-  function bindSession(code, topic, dkey, renderItems, initialActive, mcOnly) {
-    var activeItems = initialActive;
-    var draft = drafts[dkey] || { pick: {}, text: {}, paper: {} };
-    function persist() { drafts[dkey] = draft; save(); updateAnswered(); }
-    function answeredCount() {
-      return activeItems.filter(function (it) {
-        if (it.kind === 'mc') return !!draft.pick[it.id];
-        return (draft.text[it.id] && draft.text[it.id].trim()) || draft.paper[it.id];
-      }).length;
-    }
-    function updateAnswered() {
-      $('#answeredCount').textContent = answeredCount();
-      $('#totalCount').textContent = activeItems.length;
-    }
-    function submitLabel() {
-      var nMc = activeItems.filter(function (it) { return it.kind === 'mc'; }).length;
-      $('#submitBtn').textContent = sessState.mcOnly
-        ? '✅ 提交 ' + nMc + ' 道選擇題'
-        : '✅ 全部做完，一次過提交';
-    }
-    updateAnswered(); submitLabel();
-
-    // 隨機十題「換一組」：清走之前未提交嘅隨機草稿，重新抽題打亂
-    var rerollBtn = $('#rerollBtn');
-    if (rerollBtn) {
-      rerollBtn.addEventListener('click', function () {
-        var pfx = code + ':__random__';
-        Object.keys(drafts).forEach(function (k) {
-          if (k.indexOf(pfx) === 0) delete drafts[k];
-        });
-        localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
-        renderSession(code, topic, sessState.mcOnly);
-        toast('🎲 已換一組新題');
-      });
-    }
-
-    // 「只做選擇題」開關：課題頁就地動畫收起/展開；隨機頁重新抽 MC
-    $('#mcOnlyChk').addEventListener('change', function () {
-      var mc = this.checked;
-      sessState.mcOnly = mc;
-      if (topic === '__random__') { renderSession(code, topic, mc); return; }
-      activeItems = sessionItems(code, topic, mc);
-      var sec = $('.session');
-      sec.classList.toggle('mc-only', mc);
-      var qPaper = $('#qPaper');
-      var oldNote = $('.mc-only-note', sec);
-      var nSub = renderItems.filter(function (it) { return it.kind === 'sub'; }).length;
-      if (mc && nSub && !oldNote) {
-        var note = document.createElement('div');
-        note.className = 'mc-only-note';
-        note.textContent = '⚡ 已切為只做選擇題：' + nSub +
-          ' 道大題已收起，今次唔使答、唔計分、唔入記錄。';
-        sec.insertBefore(note, qPaper);
+        '</div>…764 tokens truncated…Paper);
       } else if (!mc && oldNote) {
         oldNote.remove();
       }
