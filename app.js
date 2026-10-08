@@ -291,46 +291,75 @@
 
   /* ---------------- 做題會話 ---------------- */
   var reviewState = null;   // 提交後的批改結果
+  var sessState = { code: null, topic: null, mcOnly: false };
 
-  function sessionItems(code, topic) {
-    var all = itemsOf(code).filter(function (it) { return it.topic === topic; });
+  function sessionItems(code, topic, mcOnly) {
+    var pool = itemsOf(code).filter(function (it) {
+      return it.topic === topic && (!mcOnly || it.kind === 'mc');
+    });
     if (topic === '__random__') {
-      all = itemsOf(code).slice();
-      for (var i = all.length - 1; i > 0; i--) {
-        var j = Math.floor(Math.random() * (i + 1)), t = all[i]; all[i] = all[j]; all[j] = t;
+      pool = itemsOf(code).filter(function (it) { return !mcOnly || it.kind === 'mc'; });
+      for (var i = pool.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1)), t = pool[i]; pool[i] = pool[j]; pool[j] = t;
       }
-      all = all.slice(0, 10);
+      pool = pool.slice(0, 10);
     }
-    return all;
+    return pool;
   }
 
-  function renderSession(code, topic) {
+  function renderSession(code, topic, mcOnly) {
     if (!subjOf(code) || !topic) { location.hash = '#/practice'; return; }
-    var items = sessionItems(code, topic);
+    if (mcOnly === undefined) mcOnly = false;
+    sessState = { code: code, topic: topic, mcOnly: mcOnly };
+    var items = sessionItems(code, topic, mcOnly);
     if (!items.length) { location.hash = '#/practice/' + code; return; }
-    var dkey = code + ':' + topic + (topic === '__random__' ? ':' + items.map(function (i) { return i.id; }).join(',') : '');
+    // 課題模式仍渲染全部題（大題靠 CSS 動畫收起）；隨機模式只渲染抽出的題
+    var renderItems = (topic === '__random__') ? items :
+      itemsOf(code).filter(function (it) { return it.topic === topic; });
+    var activeIds = {};
+    items.forEach(function (it) { activeIds[it.id] = true; });
+
+    var dkey = code + ':' + topic +
+      (topic === '__random__' ? ':' + (mcOnly ? 'mc:' : '') +
+        items.map(function (i) { return i.id; }).join(',') : '');
     var draft = drafts[dkey] || { pick: {}, text: {}, paper: {} };
     reviewState = null;
 
-    var title = topic === '__random__' ? '🎲 隨機十題' : esc(topic + ' ' + topicName(code, topic));
+    var title = topic === '__random__'
+      ? (mcOnly ? '🎲 隨機十題（選擇題）' : '🎲 隨機十題')
+      : esc(topic + ' ' + topicName(code, topic));
+    var nMc = renderItems.filter(function (it) { return it.kind === 'mc'; }).length;
+    var nSub = renderItems.length - nMc;
     $('#app').innerHTML =
-      '<section class="page session" data-key="' + esc(dkey) + '" data-code="' + code + '" data-topic="' + esc(topic) + '">' +
+      '<section class="page session' + (mcOnly ? ' mc-only' : '') +
+        '" data-key="' + esc(dkey) + '" data-code="' + code + '" data-topic="' + esc(topic) + '">' +
         '<header class="page-head">' +
           '<div><h1 class="page-title">' + SUBJECT_META[code].icon + ' ' + title + '</h1>' +
-          '<p class="page-sub"><span id="answeredCount">0</span> / ' + items.length + ' 題已作答 · ' +
-            'MC 自動批改，大題照踩分點自己勾分</p></div>' +
-          '<a class="btn btn-ghost" href="#/practice/' + code + '">← 離開</a>' +
+          '<p class="page-sub"><span id="answeredCount">0</span> / <span id="totalCount">' +
+            items.length + '</span> 題已作答 · MC 自動批改，大題照踩分點自己勾分</p></div>' +
+          '<div class="head-actions">' +
+            '<label class="mc-toggle" title="時間唔夠就只刷選擇題，大題會收起、唔計分、唔入記錄">' +
+              '<input type="checkbox" id="mcOnlyChk"' + (mcOnly ? ' checked' : '') +
+                (nMc ? '' : ' disabled') + '><span class="mc-switch"></span>' +
+              '<span class="mc-toggle-lbl">⚡ 只做選擇題' +
+                (nSub ? '<small>' + nMc + ' MC / ' + nSub + ' 大題</small>' : '') + '</span>' +
+            '</label>' +
+            '<a class="btn btn-ghost" href="#/practice/' + code + '">← 離開</a>' +
+          '</div>' +
         '</header>' +
+        (mcOnly && nSub ? '<div class="mc-only-note">⚡ 已切為只做選擇題：' + nSub +
+          ' 道大題已收起，今次唔使答、唔計分、唔入記錄。</div>' : '') +
         '<div class="q-paper" id="qPaper">' +
-          items.map(function (it, idx) { return questionHtml(it, idx, draft); }).join('') +
+          renderItems.map(function (it, idx) { return questionHtml(it, idx, draft); }).join('') +
         '</div>' +
         '<div class="submit-bar" id="submitBar">' +
-          '<button class="btn btn-primary btn-lg" id="submitBtn" type="button">✅ 全部做完，一次過提交</button>' +
+          '<button class="btn btn-primary btn-lg" id="submitBtn" type="button">' +
+            (mcOnly ? '✅ 提交 ' + nMc + ' 道選擇題' : '✅ 全部做完，一次過提交') + '</button>' +
         '</div>' +
         '<div class="result-panel" id="resultPanel" hidden></div>' +
       '</section>';
 
-    bindSession(code, topic, dkey, items);
+    bindSession(code, topic, dkey, renderItems, items, mcOnly);
   }
 
   function questionHtml(it, idx, draft) {
@@ -366,17 +395,50 @@
     return '<article class="sq" data-id="' + esc(it.id) + '" data-kind="' + it.kind + '">' + head + body + '</article>';
   }
 
-  function bindSession(code, topic, dkey, items) {
+  function bindSession(code, topic, dkey, renderItems, initialActive, mcOnly) {
+    var activeItems = initialActive;
     var draft = drafts[dkey] || { pick: {}, text: {}, paper: {} };
     function persist() { drafts[dkey] = draft; save(); updateAnswered(); }
     function answeredCount() {
-      return items.filter(function (it) {
+      return activeItems.filter(function (it) {
         if (it.kind === 'mc') return !!draft.pick[it.id];
         return (draft.text[it.id] && draft.text[it.id].trim()) || draft.paper[it.id];
       }).length;
     }
-    function updateAnswered() { $('#answeredCount').textContent = answeredCount(); }
-    updateAnswered();
+    function updateAnswered() {
+      $('#answeredCount').textContent = answeredCount();
+      $('#totalCount').textContent = activeItems.length;
+    }
+    function submitLabel() {
+      var nMc = activeItems.filter(function (it) { return it.kind === 'mc'; }).length;
+      $('#submitBtn').textContent = sessState.mcOnly
+        ? '✅ 提交 ' + nMc + ' 道選擇題'
+        : '✅ 全部做完，一次過提交';
+    }
+    updateAnswered(); submitLabel();
+
+    // 「只做選擇題」開關：課題頁就地動畫收起/展開；隨機頁重新抽 MC
+    $('#mcOnlyChk').addEventListener('change', function () {
+      var mc = this.checked;
+      sessState.mcOnly = mc;
+      if (topic === '__random__') { renderSession(code, topic, mc); return; }
+      activeItems = sessionItems(code, topic, mc);
+      var sec = $('.session');
+      sec.classList.toggle('mc-only', mc);
+      var qPaper = $('#qPaper');
+      var oldNote = $('.mc-only-note', sec);
+      var nSub = renderItems.filter(function (it) { return it.kind === 'sub'; }).length;
+      if (mc && nSub && !oldNote) {
+        var note = document.createElement('div');
+        note.className = 'mc-only-note';
+        note.textContent = '⚡ 已切為只做選擇題：' + nSub +
+          ' 道大題已收起，今次唔使答、唔計分、唔入記錄。';
+        sec.insertBefore(note, qPaper);
+      } else if (!mc && oldNote) {
+        oldNote.remove();
+      }
+      updateAnswered(); submitLabel();
+    });
 
     $all('.opts', $('#app')).forEach(function (box) {
       box.addEventListener('click', function (e) {
@@ -398,22 +460,24 @@
     });
 
     $('#submitBtn').addEventListener('click', function () {
-      var miss = items.filter(function (it) {
+      var miss = activeItems.filter(function (it) {
         if (it.kind === 'mc') return !draft.pick[it.id];
         return !((draft.text[it.id] && draft.text[it.id].trim()) || draft.paper[it.id]);
       });
       if (miss.length) {
-        toast('仲有 ' + miss.length + ' 題未作答（MC 要揀，大題要默寫或剔紙上寫完）');
+        toast(sessState.mcOnly
+          ? '仲有 ' + miss.length + ' 題 MC 未揀'
+          : '仲有 ' + miss.length + ' 題未作答（MC 要揀，大題要默寫或剔紙上寫完）');
         var el = $('.sq[data-id="' + miss[0].id + '"]');
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         return;
       }
-      submitSession(code, topic, dkey, items, draft);
+      submitSession(code, topic, dkey, activeItems, draft, sessState.mcOnly);
     });
   }
 
   /* ---------- 提交批改 ---------- */
-  function submitSession(code, topic, dkey, items, draft) {
+  function submitSession(code, topic, dkey, items, draft, mcOnly) {
     reviewState = { results: {} };
     var mcFull = 0, mcMarks = 0, subFull = 0;
 
@@ -431,9 +495,9 @@
 
     // 渲染批改面板（MC 直接出結果；大題出踩分點表單）
     var html = '<div class="rp-head">' +
-      '<h2>📋 批改結果（MC 已自動改，大題自己照踩分點剔分）</h2>' +
+      '<h2>📋 批改結果' + (mcOnly ? '（只做選擇題，已自動批改）' : '（MC 已自動改，大題自己照踩分點剔分）') + '</h2>' +
       '<div class="rp-score">MC <b id="mcScore">' + mcMarks + ' / ' + mcFull + '</b> 分' +
-      '　·　大題 <b id="subScore">0 / ' + subFull + '</b> 分' +
+      (mcOnly ? '' : '　·　大題 <b id="subScore">0 / ' + subFull + '</b> 分') +
       '　·　總分 <b id="allScore">' + mcMarks + ' / ' + (mcFull + subFull) + '</b></div></div>';
 
     items.forEach(function (it, idx) {
@@ -526,20 +590,33 @@
         return s + (r.kind === 'sub' ? r.marks : 0);
       }, 0);
       sessions.push({
-        t: Date.now(), subj: code, topic: topic,
+        t: Date.now(), subj: code, topic: topic, mcOnly: !!mcOnly,
         results: reviewState.results,
-        mc: mcMarks + '/' + mcFull, sub: subGotFinal + '/' + subFull
+        mc: mcMarks + '/' + mcFull, sub: mcOnly ? null : (subGotFinal + '/' + subFull)
       });
-      delete drafts[dkey];
+      if (mcOnly && topic !== '__random__') {
+        // 只清今次提交嘅 MC 揀答，保留大題默寫草稿
+        items.forEach(function (it) { delete draft.pick[it.id]; });
+        if (!Object.keys(draft.pick).length &&
+            !Object.keys(draft.text).length && !Object.keys(draft.paper).length) {
+          delete drafts[dkey];
+        }
+      } else {
+        delete drafts[dkey];
+      }
       save();
-      var pct = Math.round((mcMarks + subGotFinal) / (mcFull + subFull) * 100);
+      var totalGot = mcMarks + (mcOnly ? 0 : subGotFinal);
+      var totalFull = mcFull + (mcOnly ? 0 : subFull);
+      var pct = Math.round(totalGot / totalFull * 100);
       panel.innerHTML =
         '<div class="saved-card">' +
           '<div class="saved-emoji">🎉</div>' +
           '<h2>已存入做題記錄</h2>' +
-          '<div class="saved-score">' + (mcMarks + subGotFinal) + ' / ' + (mcFull + subFull) +
+          '<div class="saved-score">' + totalGot + ' / ' + totalFull +
             ' 分（' + pct + '%）</div>' +
-          '<div class="saved-sub">MC ' + mcMarks + '/' + mcFull + '　大題 ' + subGotFinal + '/' + subFull + '</div>' +
+          '<div class="saved-sub">' + (mcOnly
+            ? '⚡ 只做選擇題 · MC ' + mcMarks + '/' + mcFull
+            : 'MC ' + mcMarks + '/' + mcFull + '　大題 ' + subGotFinal + '/' + subFull) + '</div>' +
           '<div class="rp-actions"><a class="btn btn-primary" href="#/records">📈 睇記錄</a>' +
           '<a class="btn btn-ghost" href="#/practice/' + code + '">繼續練習 →</a></div>' +
         '</div>';
@@ -584,6 +661,9 @@
   function renderRecords() {
     var latest = latestMap();
     var totalQ = SUBJECT_ORDER.reduce(function (n, c) { return n + itemsOf(c).length; }, 0);
+    var totalDone = sessions.reduce(function (n, s) {
+      return n + Object.keys(s.results).length;
+    }, 0);
 
     // 仍錯清單
     var wrongRows = [];
@@ -606,14 +686,14 @@
         '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
 
         '<div class="stat-cards">' +
-          statCard('🗓️', '累計刷題', sessions.length + ' 次') +
-          statCard('📚', '錯題在庫', totalQ + ' 題') +
+          statCard('✍️', '累計作答', totalDone + ' 題') +
+          statCard('🗓️', '練習次數', sessions.length + ' 次') +
           statCard('🔁', '上次仍錯', wrongRows.length + ' 題', wrongRows.length ? 'c-red' : 'c-green') +
         '</div>' +
 
-        '<div class="panel"><h2 class="panel-h">刷題活躍圖（近 20 週）</h2><div id="heat"></div>' +
-        '<div class="heat-legend">少 <span class="lv lv0"></span><span class="lv lv1"></span>' +
-        '<span class="lv lv2"></span><span class="lv lv3"></span><span class="lv lv4"></span> 多</div></div>' +
+        '<div class="panel"><h2 class="panel-h">刷題活躍圖（近 20 週，按答題數）</h2><div id="heat"></div>' +
+        '<div class="heat-legend">0題 <span class="lv lv0"></span><span class="lv lv1"></span>' +
+        '<span class="lv lv2"></span><span class="lv lv3"></span><span class="lv lv4"></span> ≥半個題庫</div></div>' +
 
         '<div class="panel"><div class="panel-h-row"><h2 class="panel-h">🔍 查詢：上次複習仲錯嘅題</h2>' +
           '<div class="filter-seg" id="wrongFilter">' +
@@ -642,18 +722,21 @@
   }
 
   function renderHeat() {
-    // 近 140 日，按週列（7 格）
-    var days = 140, byDay = {};
+    // 近 140 日，按週列（7 格）；顏色深淺＝當日作答題數佔題庫總題數百分比
+    var days = 140, totalQ = SUBJECT_ORDER.reduce(function (n, c) { return n + itemsOf(c).length; }, 0);
+    var byDay = {};
     sessions.forEach(function (s) {
       var d = new Date(s.t); d.setHours(0, 0, 0, 0);
       var key = d.getTime();
-      if (!byDay[key]) byDay[key] = { n: 0, score: 0, tot: 0 };
+      if (!byDay[key]) byDay[key] = { q: 0, n: 0 };
       byDay[key].n += 1;
-      Object.keys(s.results).forEach(function (id) {
-        byDay[key].score += s.results[id].marks;
-        byDay[key].tot += s.results[id].tot;
-      });
+      byDay[key].q += Object.keys(s.results).length;
     });
+    function lvlOf(q) {
+      if (!q) return 0;
+      var p = q / totalQ;
+      return p >= 0.5 ? 4 : p >= 0.25 ? 3 : p >= 0.1 ? 2 : 1;
+    }
     var today = new Date(); today.setHours(0, 0, 0, 0);
     var start = new Date(today.getTime() - (days - 1) * 864e5);
     start.setDate(start.getDate() - start.getDay()); // 對齊週日
@@ -666,13 +749,13 @@
         var t = start.getTime() + (col * 7 + dow) * 864e5;
         var future = t > today.getTime();
         var info = byDay[t];
-        var lvl = 0;
-        if (!future && info) lvl = info.n >= 5 ? 4 : info.n >= 3 ? 3 : info.n >= 2 ? 2 : 1;
+        var lvl = (!future && info) ? lvlOf(info.q) : 0;
         var tip = '';
         if (info) {
           var dt = new Date(t);
           var ds = dt.getFullYear() + '/' + pad(dt.getMonth() + 1) + '/' + pad(dt.getDate());
-          tip = ds + ' 刷題 ' + info.n + ' 次（' + info.score + '/' + info.tot + ' 分）';
+          var pct = Math.round(info.q / totalQ * 100);
+          tip = ds + ' 刷了 ' + info.q + ' 題（佔題庫 ' + pct + '%，' + info.n + ' 次練習）';
         }
         html += '<span class="cell lv' + lvl + (future ? ' is-future' : '') + '"' +
           (tip ? ' title="' + tip + '"' : '') + '></span>';
