@@ -236,16 +236,22 @@ export default {
         }
         const body = await request.json();
         if (!body.data || body.data.app !== 'kyle-dse-quiz') return json({ error: 'invalid_backup' }, 400, cors(request));
-        const current = await github(path, auth.token).catch(error => error.status === 404 ? null : Promise.reject(error));
-        let merged = body.data;
-        if (current) {
-          const oldData = JSON.parse(decodeUtf8(current.content));
-          merged = mergeBackup(oldData, body.data);
+        let saved = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const current = await github(path, auth.token).catch(error => error.status === 404 ? null : Promise.reject(error));
+          const merged = current
+            ? mergeBackup(JSON.parse(decodeUtf8(current.content)), body.data)
+            : body.data;
+          const payload = { message: 'Sync practice records', content: encodeUtf8(JSON.stringify(merged, null, 2)) };
+          if (current) payload.sha = current.sha;
+          try {
+            saved = await github(path, auth.token, { method: 'PUT', body: JSON.stringify(payload) });
+            break;
+          } catch (error) {
+            if (error.status !== 409 || attempt === 2) throw error;
+          }
         }
-        const payload = { message: 'Sync practice records', content: encodeUtf8(JSON.stringify(merged, null, 2)) };
-        if (current) payload.sha = current.sha;
-        const saved = await github(path, auth.token, { method: 'PUT', body: JSON.stringify(payload) });
-        return json({ ok: true, sha: saved.content && saved.content.sha, savedAt: new Date().toISOString() }, 200, cors(request));
+        return json({ ok: true, sha: saved && saved.content && saved.content.sha, savedAt: new Date().toISOString() }, 200, cors(request));
       } catch (error) {
         if (error.status === 401) await env.SESSIONS.delete(auth.sessionKey);
         return json({ error: error.message || 'github_error', status: error.status || 500 }, error.status || 500, cors(request));
