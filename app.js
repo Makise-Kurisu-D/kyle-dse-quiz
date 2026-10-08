@@ -828,7 +828,7 @@
         '<div class="heat-legend">少 <span class="lv lv0"></span><span class="lv lv1"></span>' +
         '<span class="lv lv2"></span><span class="lv lv3"></span><span class="lv lv4"></span> 多（佔題庫比例）</div></div>' +
 
-        '<div class="panel"><div class="panel-h-row"><h2 class="panel-h">🔍 查詢：上次複習仲錯嘅題</h2>' +
+        '<div class="panel"><div class="panel-h-row"><h2 class="panel-h">🔍 錯題複習狀態（仍錯在上、已通過嘅沉底）</h2>' +
           '<div class="filter-seg" id="wrongFilter">' +
             ['ALL', 'chem', 'bio'].map(function (c) {
               var lbl = c === 'ALL' ? '全部' : SUBJECT_META[c].name;
@@ -977,32 +977,87 @@
   }
   function pad(n) { return (n < 10 ? '0' : '') + n; }
 
+  // 每題喺當前週期嘅完整答題序列（時間序）
+  function historyMap() {
+    var map = {};
+    sessions.slice().sort(function (a, b) { return a.t - b.t; }).forEach(function (s) {
+      Object.keys(s.results).forEach(function (id) {
+        var r = s.results[id];
+        (map[id] = map[id] || []).push({
+          ok: r.ok, ratio: r.tot ? r.marks / r.tot : (r.ok ? 1 : 0), date: s.t
+        });
+      });
+    });
+    return map;
+  }
+  function fullRight(r) { return r.ok === true && r.ratio >= 0.99; }
+
   function renderWrongList(filter) {
     var latest = latestMap();
-    var rows = [];
+    var hist = historyMap();
+    var due = [], passOnce = [], passStrong = [];
     SUBJECT_ORDER.forEach(function (code) {
       if (filter !== 'ALL' && filter !== code) return;
       itemsOf(code).forEach(function (it) {
         var l = latest[it.id];
-        if (isWrong(l)) rows.push({ code: code, it: it, l: l });
+        var row = { code: code, it: it, l: l, seq: hist[it.id] || [] };
+        if (isWrong(l)) {
+          due.push(row);
+        } else if (l) {
+          // 最近一次全對：連續全對 ≥2 次＝反複通過；否則只算最近答對
+          var n = row.seq.length, streak = 0;
+          for (var i = n - 1; i >= 0 && fullRight(row.seq[i]); i--) streak++;
+          (streak >= 2 ? passStrong : passOnce).push(row);
+        }
       });
     });
-    rows.sort(function (a, b) { return (b.l ? b.l.date : 0) - (a.l ? a.l.date : 0); });
+    var byRecent = function (a, b) { return (b.l.date || 0) - (a.l.date || 0); };
+    // 待處理：已刷仍錯嘅按得分率由低到高（最差優先）、同分近期優先；未刷過沉底
+    due.sort(function (a, b) {
+      if (a.l && b.l) return (a.l.ratio - b.l.ratio) || (b.l.date - a.l.date);
+      if (a.l) return -1;
+      if (b.l) return 1;
+      return 0;
+    });
+    passOnce.sort(byRecent);
+    passStrong.sort(byRecent);
     var el = $('#wrongList');
-    if (!rows.length) {
+    if (!due.length && !passOnce.length && !passStrong.length) {
       el.innerHTML = '<div class="empty-ok">🎉 呢科嘅錯題全部征服咗！</div>';
       return;
     }
-    el.innerHTML = rows.map(function (r) {
+
+    function rowHtml(r, cls, badge) {
       var when = r.l ? fmtDate(r.l.date) : '從未刷過';
-      var ratioTxt = r.l && r.l.ratio < 1 ? Math.round(r.l.ratio * 100) + '%' : (r.l ? '✔' : '—');
-      return '<a class="wrong-row" href="#/session/' + r.code + '/' + encodeURIComponent(r.it.topic) + '">' +
+      var ratioTxt = r.l && r.l.ratio < 1 ? Math.round(r.l.ratio * 100) + '%' : (r.l ? '滿分' : '—');
+      return '<a class="wrong-row ' + cls + '" href="#/session/' + r.code + '/' +
+        encodeURIComponent(r.it.topic) + '">' +
         '<span class="wrong-subj">' + SUBJECT_META[r.code].icon + '</span>' +
         '<span class="wrong-main"><b>' + esc(r.it.qref) + '</b> ' + esc(r.it.stem) +
           '<small>' + esc(r.it.topic + ' ' + topicName(r.code, r.it.topic)) +
           ' · ' + when + (r.l ? ' · 上次得分率 ' + ratioTxt : '') + '</small></span>' +
+        badge +
         '<span class="wrong-go">再練 →</span></a>';
-    }).join('');
+    }
+    function group(title, rows, cls, badge, empty) {
+      if (!rows.length) return '';
+      return '<div class="wrong-group-h ' + cls + '">' + title + '（' + rows.length + '）</div>' +
+        rows.map(function (r) {
+          if (cls === 'due') {
+            var b = !r.l ? '<span class="wb wb-new">未刷</span>'
+              : '<span class="wb wb-bad">仍錯 ' + (r.l.ratio < 1 ? Math.round(r.l.ratio * 100) + '%' : '✘') + '</span>';
+            return rowHtml(r, 'due', b);
+          }
+          var bb = cls === 'strong'
+            ? '<span class="wb wb-strong">反複通過 ✔✔</span>'
+            : '<span class="wb wb-ok">最近答對 ✔</span>';
+          return rowHtml(r, cls, bb);
+        }).join('');
+    }
+    el.innerHTML =
+      group('🔴 待處理', due, 'due', null) +
+      group('🟢 已答對（再刷可鞏固）', passOnce, 'once', null) +
+      group('🌟 反複測試通過', passStrong, 'strong', null);
   }
   function fmtDate(t) {
     var d = new Date(t);
