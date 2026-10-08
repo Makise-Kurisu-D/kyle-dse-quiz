@@ -9,6 +9,10 @@
   var LS_ARCHIVE = 'dse_quiz_archive_v1';
   var LS_CYCLE = 'dse_quiz_cycle_v1';
   var LS_REVIEW = 'dse_quiz_review_v1';
+  var LS_SYNC_SESSION = 'dse_quiz_sync_session_v1';
+  var LS_SYNCED_AT = 'dse_quiz_sync_at_v1';
+  var SYNC_API = String(window.QUIZ_SYNC_API || '').replace(/\/+$/, '');
+  var syncTimer = null, syncBusy = false;
   // 雙週重置：以 2026-10-05（一）00:00 本地為錨，每 14 日為一輪
   var CYCLE_MS = 14 * 24 * 3600 * 1000;
   var CYCLE_ANCHOR = new Date(2026, 9, 5, 0, 0, 0).getTime();
@@ -32,6 +36,105 @@
     localStorage.setItem(LS_SESS, JSON.stringify(sessions));
     localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
     localStorage.setItem(LS_REVIEW, JSON.stringify(reviewPlan));
+    scheduleSync();
+  }
+
+  function backupData() {
+    return {
+      app: 'kyle-dse-quiz', version: 1, exportedAt: new Date().toISOString(),
+      sessions: sessions, archive: archive, drafts: drafts, reviewPlan: reviewPlan,
+      cycle: localStorage.getItem(LS_CYCLE) || null
+    };
+  }
+  function mergeData(remote) {
+    if (!remote || remote.app !== 'kyle-dse-quiz') return false;
+    function mergeSessions(a, b) {
+      var seen = {}, out = [];
+      (a || []).concat(b || []).forEach(function (s) {
+        if (!s || typeof s.t !== 'number') return;
+        var key = [s.t, s.subj, s.topic, JSON.stringify(s.results || {})].join('|');
+        if (!seen[key]) { seen[key] = true; out.push(s); }
+      });
+      return out.sort(function (x, y) { return x.t - y.t; });
+    }
+    sessions = mergeSessions(sessions, remote.sessions);
+    archive = mergeSessions(archive, remote.archive);
+    drafts = Object.assign({}, remote.drafts || {}, drafts);
+    var plans = Object.assign({}, remote.reviewPlan || {});
+    Object.keys(reviewPlan).forEach(function (id) {
+      if (!plans[id] || (reviewPlan[id].lastAt || 0) >= (plans[id].lastAt || 0)) plans[id] = reviewPlan[id];
+    });
+    reviewPlan = plans;
+    var localCycle = parseInt(localStorage.getItem(LS_CYCLE) || '0', 10);
+    var remoteCycle = parseInt(remote.cycle || '0', 10);
+    var cycle = Math.max(localCycle, remoteCycle);
+    localStorage.setItem(LS_SESS, JSON.stringify(sessions));
+    localStorage.setItem(LS_ARCHIVE, JSON.stringify(archive));
+    localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
+    localStorage.setItem(LS_REVIEW, JSON.stringify(reviewPlan));
+    if (cycle) localStorage.setItem(LS_CYCLE, String(cycle));
+    return true;
+  }
+  function syncRequest(method, body) {
+    var session = localStorage.getItem(LS_SYNC_SESSION);
+    if (!SYNC_API || !session) return Promise.reject(new Error('未設定同步服務或尚未連接 GitHub'));
+    return fetch(SYNC_API + '/sync', {
+      method: method,
+      headers: { 'Authorization': 'Bearer ' + session, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+      cache: 'no-store'
+    }).then(function (r) {
+      return r.json().then(function (data) {
+        if (!r.ok) throw new Error(data.error || '同步失敗 (' + r.status + ')');
+        return data;
+      });
+    });
+  }
+  function syncNow(mergeRemote) {
+    if (syncBusy || !localStorage.getItem(LS_SYNC_SESSION) || !SYNC_API) return Promise.resolve(false);
+    syncBusy = true;
+    setSyncStatus('同步中…');
+    return syncRequest('GET').then(function (remote) {
+      if (remote.data) mergeData(remote.data);
+      return syncRequest('PUT', { data: backupData() });
+    }).then(function (result) {
+      localStorage.setItem(LS_SYNCED_AT, result.savedAt || new Date().toISOString());
+      setSyncStatus('已自動同步 · ' + new Date(result.savedAt || Date.now()).toLocaleString());
+      if (location.hash.indexOf('/records') >= 0) renderRecords();
+      return true;
+    }).catch(function (err) {
+      setSyncStatus('同步失敗：' + err.message);
+      return false;
+    }).finally(function () { syncBusy = false; });
+  }
+  function scheduleSync() {
+    if (!localStorage.getItem(LS_SYNC_SESSION) || !SYNC_API) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(function () { syncNow(true); }, 1400);
+  }
+  function setSyncStatus(message) {
+    var el = $('#syncStatus');
+    if (el) el.textContent = message;
+  }
+  function initSync() {
+    var hash = location.hash;
+    var handoff = (hash.match(/[?&]handoff=([^&]+)/) || [])[1];
+    if (handoff && SYNC_API) {
+      history.replaceState(null, '', location.pathname + location.search + '#/records');
+      fetch(SYNC_API + '/auth/exchange', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ handoff: decodeURIComponent(handoff) })
+      }).then(function (r) { if (!r.ok) throw new Error('授权会话已失效'); return r.json(); })
+        .then(function (data) {
+          localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
+          return syncNow(true);
+        }).catch(function (err) { setSyncStatus('连接失败：' + err.message); });
+    } else if (hash.indexOf('sync=cancelled') >= 0) {
+      history.replaceState(null, '', location.pathname + location.search + '#/records');
+      setTimeout(function () { setSyncStatus('已取消 GitHub 授权'); }, 0);
+    } else if (localStorage.getItem(LS_SYNC_SESSION)) {
+      setTimeout(function () { syncNow(true); }, 600);
+    }
   }
 
   function cycleStartOf(ts) {
@@ -58,6 +161,7 @@
       localStorage.setItem(LS_SESS, JSON.stringify([]));
       localStorage.removeItem(LS_DRAFT);
       localStorage.setItem(LS_CYCLE, String(cur));
+      scheduleSync();
       return true;
     }
     return false;
@@ -875,6 +979,16 @@
           '<input id="importDataFile" type="file" accept="application/json,.json" hidden></div>' +
           '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
 
+        '<div class="panel sync-panel"><div class="panel-h-row"><h2 class="panel-h">☁️ GitHub 私有仓库自动同步</h2>' +
+          '<div class="record-tools">' +
+            (!SYNC_API ? '<button class="btn btn-ghost" id="syncConnectBtn" type="button" disabled>同步服务待部署</button>' :
+              (localStorage.getItem(LS_SYNC_SESSION)
+                ? '<button class="btn btn-ghost" id="syncNowBtn" type="button">立即同步</button><button class="btn btn-ghost" id="syncDisconnectBtn" type="button">断开连接</button>'
+                : '<button class="btn btn-primary" id="syncConnectBtn" type="button">连接 GitHub</button>')) +
+          '</div></div>' +
+          '<p class="review-note" id="syncStatus">' + esc(!SYNC_API ? '同步服务尚未部署。部署完成后，练习记录会自动备份到你的私有仓库。' :
+            (localStorage.getItem(LS_SYNC_SESSION) ? ('已连接 · 上次同步：' + (localStorage.getItem(LS_SYNCED_AT) ? new Date(localStorage.getItem(LS_SYNCED_AT)).toLocaleString() : '尚未同步')) : '连接后会合并本机与私有仓库的记录，之后自动同步。')) + '</p></div>' +
+
         '<div class="stat-cards">' +
           statCard('✍️', '累計作答', totalDone + ' 題') +
           statCard('🗓️', '練習次數', sessions.length + ' 次') +
@@ -911,14 +1025,23 @@
     $('#exportDataBtn').addEventListener('click', exportData);
     $('#importDataBtn').addEventListener('click', function () { $('#importDataFile').click(); });
     $('#importDataFile').addEventListener('change', importData);
+    var connectBtn = $('#syncConnectBtn');
+    if (connectBtn && SYNC_API) connectBtn.addEventListener('click', function () {
+      location.href = SYNC_API + '/auth/start';
+    });
+    var nowBtn = $('#syncNowBtn');
+    if (nowBtn) nowBtn.addEventListener('click', function () { syncNow(true); });
+    var disconnectBtn = $('#syncDisconnectBtn');
+    if (disconnectBtn) disconnectBtn.addEventListener('click', function () {
+      if (confirm('断开 GitHub 自动同步？本机及私有仓库的记录不会被删除。')) {
+        localStorage.removeItem(LS_SYNC_SESSION);
+        renderRecords();
+      }
+    });
   }
 
   function exportData() {
-    var backup = {
-      app: 'kyle-dse-quiz', version: 1, exportedAt: new Date().toISOString(),
-      sessions: sessions, archive: archive, drafts: drafts, reviewPlan: reviewPlan,
-      cycle: localStorage.getItem(LS_CYCLE) || null
-    };
+    var backup = backupData();
     var blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
     var url = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = url; a.download = 'kyle-dse-quiz-backup-' + fmtDate(Date.now()).replace(/\//g, '-') + '.json';
@@ -947,6 +1070,7 @@
       localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
       localStorage.setItem(LS_REVIEW, JSON.stringify(reviewPlan));
       if (data.cycle) localStorage.setItem(LS_CYCLE, String(data.cycle));
+      scheduleSync();
       e.target.value = '';
       toast('備份已還原 ✔');
       renderRecords();
@@ -1209,11 +1333,15 @@
   /* ---------------- 重設 ---------------- */
   document.addEventListener('click', function (e) {
     if (e.target.closest('#railReset')) {
-      if (confirm('確定清除所有做題記錄同未提交嘅作答？（題庫本身唔會刪）')) {
+      if (confirm('確定清除所有做題記錄、雙週歸檔及未提交作答？如已連接 GitHub，私有倉庫備份亦會一併清除。（題庫本身唔會刪）')) {
         localStorage.removeItem(LS_SESS);
+        localStorage.removeItem(LS_ARCHIVE);
         localStorage.removeItem(LS_DRAFT);
         localStorage.removeItem(LS_REVIEW);
-        sessions = []; drafts = {}; reviewPlan = {};
+        sessions = []; archive = []; drafts = {}; reviewPlan = {};
+        if (localStorage.getItem(LS_SYNC_SESSION) && SYNC_API) {
+          syncRequest('DELETE').catch(function (err) { toast('本機已清除；雲端清除失敗：' + err.message); });
+        }
         location.hash = '#/';
         route();
         toast('已清除');
@@ -1223,6 +1351,7 @@
 
   seedReviewPlan();
   normalizeReviewPlan();
+  initSync();
   if (ensureCycle()) {
     setTimeout(function () { toast('🔄 新嘅雙週開始，進度已重置！'); }, 300);
   }
