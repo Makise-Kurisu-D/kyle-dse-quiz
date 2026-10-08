@@ -8,6 +8,7 @@
   var LS_DRAFT = 'dse_quiz_draft_v2';
   var LS_ARCHIVE = 'dse_quiz_archive_v1';
   var LS_CYCLE = 'dse_quiz_cycle_v1';
+  var LS_REVIEW = 'dse_quiz_review_v1';
   // 雙週重置：以 2026-10-05（一）00:00 本地為錨，每 14 日為一輪
   var CYCLE_MS = 14 * 24 * 3600 * 1000;
   var CYCLE_ANCHOR = new Date(2026, 9, 5, 0, 0, 0).getTime();
@@ -15,6 +16,7 @@
   var sessions = load(LS_SESS, []);
   var archive = load(LS_ARCHIVE, []);
   var drafts = load(LS_DRAFT, {});
+  var reviewPlan = load(LS_REVIEW, {});
   var SUBJECT_ORDER = ['chem', 'bio'];
   var SUBJECT_META = {
     chem: { name: '化學', icon: '⚗️', soon: false },
@@ -29,6 +31,7 @@
   function save() {
     localStorage.setItem(LS_SESS, JSON.stringify(sessions));
     localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
+    localStorage.setItem(LS_REVIEW, JSON.stringify(reviewPlan));
   }
 
   function cycleStartOf(ts) {
@@ -117,6 +120,38 @@
     return itemsOf(code).filter(function (it) {
       return it.topic === topic && isWrong(latest[it.id]);
     }).length;
+  }
+
+  // 間隔複習：答對後按 1、3、7、14、30 日逐步拉長；未滿分則翌日再練。
+  var REVIEW_DAYS = [1, 3, 7, 14, 30];
+  function updateReviewPlan(id, result, at) {
+    var previous = reviewPlan[id];
+    var ratio = result.tot ? result.marks / result.tot : (result.ok ? 1 : 0);
+    var passed = result.ok === true && ratio >= 0.99;
+    var level = passed ? Math.min(previous ? previous.level + 1 : 0, REVIEW_DAYS.length - 1) : 0;
+    var days = REVIEW_DAYS[level];
+    reviewPlan[id] = {
+      level: level, interval: days, lastAt: at, dueAt: at + days * 864e5,
+      ratio: ratio, streak: passed ? (previous.streak || 0) + 1 : 0
+    };
+  }
+  function reviewDue(id, now) {
+    var p = reviewPlan[id];
+    return !!(p && p.dueAt <= (now || Date.now()));
+  }
+  function seedReviewPlan() {
+    var history = allSessions().slice().sort(function (a, b) { return a.t - b.t; });
+    var needsSeed = {};
+    history.forEach(function (s) {
+      Object.keys(s.results || {}).forEach(function (id) {
+        if (!reviewPlan[id]) needsSeed[id] = true;
+      });
+    });
+    history.forEach(function (s) {
+      Object.keys(s.results || {}).forEach(function (id) {
+        if (needsSeed[id]) updateReviewPlan(id, s.results[id], s.t);
+      });
+    });
   }
 
   // 簡體→繁體（數據裡少量簡體術語，學生默寫多為繁體；只收斂到繁體）
@@ -706,7 +741,7 @@
     $('#saveSessionBtn').addEventListener('click', function () {
       // 落齊大題結果（未剔任何項也要存 0 分）
       items.forEach(function (it) {
-        if (it.kind !== 'sub') return;
+        if (it.kind !== 'sub' || mcOnly) return;
         var f = $('.chk-form[data-id="' + it.id + '"]', panel);
         var n = $all('input:checked', f).reduce(function (s, cb) {
           return s + parseInt(cb.dataset.w, 10);
@@ -722,8 +757,12 @@
         var r = reviewState.results[id];
         return s + (r.kind === 'sub' ? r.marks : 0);
       }, 0);
+      var savedAt = Date.now();
+      Object.keys(reviewState.results).forEach(function (id) {
+        updateReviewPlan(id, reviewState.results[id], savedAt);
+      });
       sessions.push({
-        t: Date.now(), subj: code, topic: topic, mcOnly: !!mcOnly,
+        t: savedAt, subj: code, topic: topic, mcOnly: !!mcOnly,
         results: reviewState.results,
         mc: mcMarks + '/' + mcFull, sub: mcOnly ? null : (subGotFinal + '/' + subFull)
       });
@@ -816,7 +855,10 @@
       '<section class="page">' +
         '<header class="page-head"><div><h1 class="page-title">📈 做題記錄</h1>' +
         '<p class="page-sub">每完成一次課題練習就留一個印；滑鼠移上去睇詳情。</p></div>' +
-        '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
+          '<div class="record-tools"><button class="btn btn-ghost" id="exportDataBtn" type="button">⬇️ 匯出記錄</button>' +
+          '<button class="btn btn-ghost" id="importDataBtn" type="button">⬆️ 匯入備份</button>' +
+          '<input id="importDataFile" type="file" accept="application/json,.json" hidden></div>' +
+          '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
 
         '<div class="stat-cards">' +
           statCard('✍️', '累計作答', totalDone + ' 題') +
@@ -827,6 +869,10 @@
         '<div class="panel"><h2 class="panel-h">刷題活躍圖（近 6 個月，按答題數）</h2><div id="heat"></div>' +
         '<div class="heat-legend">少 <span class="lv lv0"></span><span class="lv lv1"></span>' +
         '<span class="lv lv2"></span><span class="lv lv3"></span><span class="lv lv4"></span> 多（佔題庫比例）</div></div>' +
+
+        '<div class="panel"><div class="panel-h-row"><h2 class="panel-h">⏰ 間隔複習（到期優先）</h2></div>' +
+          '<p class="review-note">答對後依次隔 1、3、7、14、30 日重練；未滿分則翌日再試。複習進度會跨雙週保留。</p>' +
+          '<div class="wrong-list" id="reviewDueList"></div></div>' +
 
         '<div class="panel"><div class="panel-h-row"><h2 class="panel-h">🔍 錯題複習狀態（仍錯在上、已通過嘅沉底）</h2>' +
           '<div class="filter-seg" id="wrongFilter">' +
@@ -840,12 +886,58 @@
       '</section>';
 
     renderHeat();
+    renderReviewDue();
     renderWrongList('ALL');
     $('#wrongFilter').addEventListener('click', function (e) {
       var b = e.target.closest('.seg'); if (!b) return;
       $all('.seg', this).forEach(function (x) { x.classList.toggle('on', x === b); });
       renderWrongList(b.dataset.f);
     });
+    $('#exportDataBtn').addEventListener('click', exportData);
+    $('#importDataBtn').addEventListener('click', function () { $('#importDataFile').click(); });
+    $('#importDataFile').addEventListener('change', importData);
+  }
+
+  function exportData() {
+    var backup = {
+      app: 'kyle-dse-quiz', version: 1, exportedAt: new Date().toISOString(),
+      sessions: sessions, archive: archive, drafts: drafts, reviewPlan: reviewPlan,
+      cycle: localStorage.getItem(LS_CYCLE) || null
+    };
+    var blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = 'kyle-dse-quiz-backup-' + fmtDate(Date.now()).replace(/\//g, '-') + '.json';
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    toast('備份檔已下載 ✔');
+  }
+  function importData(e) {
+    var file = e.target.files && e.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var data;
+      try { data = JSON.parse(reader.result); } catch (err) { toast('檔案不是有效 JSON'); return; }
+      var validSessions = function (v) { return Array.isArray(v) && v.every(function (s) {
+        return s && typeof s.t === 'number' && s.results && typeof s.results === 'object';
+      }); };
+      if (!data || data.app !== 'kyle-dse-quiz' || !validSessions(data.sessions) ||
+          !validSessions(data.archive || []) || !data.drafts || typeof data.drafts !== 'object' ||
+          !data.reviewPlan || typeof data.reviewPlan !== 'object') {
+        toast('備份格式不符，沒有匯入'); return;
+      }
+      if (!confirm('匯入會以備份內容取代這個瀏覽器目前的練習記錄、草稿與複習進度。確定繼續？')) return;
+      sessions = data.sessions; archive = data.archive || []; drafts = data.drafts; reviewPlan = data.reviewPlan;
+      localStorage.setItem(LS_SESS, JSON.stringify(sessions));
+      localStorage.setItem(LS_ARCHIVE, JSON.stringify(archive));
+      localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
+      localStorage.setItem(LS_REVIEW, JSON.stringify(reviewPlan));
+      if (data.cycle) localStorage.setItem(LS_CYCLE, String(data.cycle));
+      e.target.value = '';
+      toast('備份已還原 ✔');
+      renderRecords();
+    };
+    reader.onerror = function () { toast('讀取備份失敗'); };
+    reader.readAsText(file);
   }
 
   function statCard(ico, label, val, cls) {
@@ -980,17 +1072,44 @@
   // 每題喺當前週期嘅完整答題序列（時間序）
   function historyMap() {
     var map = {};
-    sessions.slice().sort(function (a, b) { return a.t - b.t; }).forEach(function (s) {
+    allSessions().slice().sort(function (a, b) { return a.t - b.t; }).forEach(function (s) {
       Object.keys(s.results).forEach(function (id) {
         var r = s.results[id];
         (map[id] = map[id] || []).push({
-          ok: r.ok, ratio: r.tot ? r.marks / r.tot : (r.ok ? 1 : 0), date: s.t
+          ok: r.ok, ratio: r.tot ? r.marks / r.tot : (r.ok ? 1 : 0),
+          marks: r.marks, tot: r.tot, date: s.t, subj: s.subj, topic: s.topic
         });
       });
     });
     return map;
   }
   function fullRight(r) { return r.ok === true && r.ratio >= 0.99; }
+
+  function renderReviewDue() {
+    var now = Date.now(), dueRows = [];
+    SUBJECT_ORDER.forEach(function (code) {
+      itemsOf(code).forEach(function (it) {
+        var p = reviewPlan[it.id];
+        if (reviewDue(it.id, now)) dueRows.push({ code: code, it: it, plan: p });
+      });
+    });
+    dueRows.sort(function (a, b) { return a.plan.dueAt - b.plan.dueAt; });
+    var el = $('#reviewDueList');
+    if (!el) return;
+    if (!dueRows.length) {
+      el.innerHTML = '<div class="empty-ok">✅ 暫時沒有到期複習；新作答會自動排入複習。</div>';
+      return;
+    }
+    el.innerHTML = dueRows.map(function (r) {
+      var overdue = Math.max(0, Math.floor((now - r.plan.dueAt) / 864e5));
+      return '<a class="wrong-row due" href="#/session/' + r.code + '/' + encodeURIComponent(r.it.topic) + '">' +
+        '<span class="wrong-subj">' + SUBJECT_META[r.code].icon + '</span>' +
+        '<span class="wrong-main"><b>' + esc(r.it.qref) + '</b> ' + esc(r.it.stem) +
+          '<small>' + esc(r.it.topic + ' ' + topicName(r.code, r.it.topic)) + ' · 已逾期 ' + overdue + ' 日' +
+          ' · 上次 ' + Math.round(r.plan.ratio * 100) + '%</small></span>' +
+        '<span class="wb wb-bad">複習到期</span><span class="wrong-go">再練 →</span></a>';
+    }).join('');
+  }
 
   function renderWrongList(filter) {
     var latest = latestMap();
@@ -1030,14 +1149,22 @@
     function rowHtml(r, cls, badge) {
       var when = r.l ? fmtDate(r.l.date) : '從未刷過';
       var ratioTxt = r.l && r.l.ratio < 1 ? Math.round(r.l.ratio * 100) + '%' : (r.l ? '滿分' : '—');
-      return '<a class="wrong-row ' + cls + '" href="#/session/' + r.code + '/' +
+      var seq = r.seq.slice(-5).reverse();
+      var details = seq.length ? '<details class="item-history"><summary>作答軌跡 · 最近 ' + seq.length + ' 次</summary>' +
+        '<ol>' + seq.map(function (a) {
+          var ratio = Math.round(a.ratio * 100);
+          return '<li><time>' + fmtDate(a.date) + '</time><b class="' + (ratio >= 99 ? 'c-green' : 'c-red') + '">' +
+            esc(String(a.marks == null ? '—' : a.marks) + '/' + String(a.tot == null ? '—' : a.tot)) +
+            ' 分 · ' + ratio + '%</b></li>';
+        }).join('') + '</ol></details>' : '<div class="item-history-empty">尚無作答紀錄</div>';
+      return '<div class="wrong-entry"><a class="wrong-row ' + cls + '" href="#/session/' + r.code + '/' +
         encodeURIComponent(r.it.topic) + '">' +
         '<span class="wrong-subj">' + SUBJECT_META[r.code].icon + '</span>' +
         '<span class="wrong-main"><b>' + esc(r.it.qref) + '</b> ' + esc(r.it.stem) +
           '<small>' + esc(r.it.topic + ' ' + topicName(r.code, r.it.topic)) +
           ' · ' + when + (r.l ? ' · 上次得分率 ' + ratioTxt : '') + '</small></span>' +
         badge +
-        '<span class="wrong-go">再練 →</span></a>';
+        '<span class="wrong-go">再練 →</span></a>' + details + '</div>';
     }
     function group(title, rows, cls, badge, empty) {
       if (!rows.length) return '';
@@ -1070,7 +1197,8 @@
       if (confirm('確定清除所有做題記錄同未提交嘅作答？（題庫本身唔會刪）')) {
         localStorage.removeItem(LS_SESS);
         localStorage.removeItem(LS_DRAFT);
-        sessions = []; drafts = {};
+        localStorage.removeItem(LS_REVIEW);
+        sessions = []; drafts = {}; reviewPlan = {};
         location.hash = '#/';
         route();
         toast('已清除');
@@ -1078,8 +1206,10 @@
     }
   });
 
+  seedReviewPlan();
   if (ensureCycle()) {
     setTimeout(function () { toast('🔄 新嘅雙週開始，進度已重置！'); }, 300);
   }
   route();
 })();
+
