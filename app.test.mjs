@@ -5,8 +5,8 @@ import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
 const data = readFileSync(new URL('./data.js', import.meta.url), 'utf8');
-function boot(hash = '', fetch = async () => { throw new Error('offline'); }) {
-  const nodes = new Map(), events = {}, timers = [], saved = new Map();
+function boot(hash = '', fetch = async () => { throw new Error('offline'); }, initialStorage = {}) {
+  const nodes = new Map(), events = {}, timers = [], saved = new Map(Object.entries(initialStorage));
   function node(selector) {
     if (!nodes.has(selector)) nodes.set(selector, {
       innerHTML: '', textContent: '', hidden: false, listeners: {},
@@ -34,6 +34,26 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }) {
   return { context, location, nodes, node, saved, timers, events };
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test('existing correct answers without a review plan do not break startup or OAuth sync', async () => {
+  const sessions = [
+    { t: 1791510000000, subj: 'chem', topic: 'T3', results: { 'old-mc': { ok: true, marks: 1, tot: 1 } } },
+    { t: 1791510100000, subj: 'chem', topic: 'T3', results: { 'old-mc': { ok: true, marks: 1, tot: 1 }, 'old-sub': { ok: true, marks: 3, tot: 3 } } },
+  ];
+  let backup;
+  const app = boot('#/records?sync=connected&handoff=test-handoff', async (url, options) => {
+    if (url.endsWith('/auth/exchange')) return { ok: true, json: async () => ({ sessionId: 'test-session' }) };
+    if (options.method === 'PUT') backup = JSON.parse(options.body).data;
+    return { ok: true, json: async () => options.method === 'GET' ? { data: null } : { savedAt: '2026-10-09T08:00:00Z' } };
+  }, { dse_quiz_sessions_v2: JSON.stringify(sessions) });
+  assert.match(app.node('#app').innerHTML, /Kyle 嘅錯題本/);
+  await settle();
+  assert.deepEqual(backup.sessions, sessions);
+  assert.equal(backup.reviewPlan['old-mc'].streak, 2);
+  assert.equal(backup.reviewPlan['old-sub'].streak, 1);
+  assert.equal(backup.reviewPlan['old-sub'].interval, 15);
+  assert.match(app.node('#syncStatus').textContent, /已自動同步/);
+});
 
 test('fresh visits, restored records and session links all start on the home page', () => {
   for (const hash of ['', '#/records', '#/session/chem/T3']) {
