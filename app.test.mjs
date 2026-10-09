@@ -4,8 +4,13 @@ import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
-const data = readFileSync(new URL('./data.js', import.meta.url), 'utf8');
-function boot(hash = '', fetch = async () => { throw new Error('offline'); }, initialStorage = {}) {
+// Synthetic fixtures contain no examination material; the live bank stays private.
+const data = 'window.QUIZ_DATA = ' + JSON.stringify({ subjects: {
+  chem: { name: '化學', topics: [{ code: 'T3', name: '示例課題' }], items: [
+    { id: 'example-mc', kind: 'mc', topic: 'T3', year: '2022', paper: '卷一', qref: '示例 1', stem: '示例題', correctOpt: 'A', img: 'images/chem-2022-mc-01.jpg' }
+  ] }, bio: { name: '生物', topics: [], items: [] }
+} });
+function boot(hash = '', fetch = async () => { throw new Error('offline'); }, initialStorage = {}, privateBank = false) {
   const nodes = new Map(), events = {}, timers = [], saved = new Map(Object.entries(initialStorage));
   function node(selector) {
     if (!nodes.has(selector)) nodes.set(selector, {
@@ -25,7 +30,8 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
     setTimeout(fn, delay) { timers.push({ fn, delay }); return timers.length; },
     clearTimeout() {}, setInterval() {}, clearInterval() {},
     scrollTo() {}, addEventListener(type, fn) { events[type] = fn; },
-    QUIZ_SYNC_API: 'https://sync.example.workers.dev',
+    QUIZ_SYNC_API: 'https://sync.example.workers.dev', QUIZ_PRIVATE_BANK: privateBank,
+    URL, Blob,
   };
   context.window = context;
   vm.createContext(context);
@@ -103,4 +109,63 @@ test('stalled authorization times out visibly instead of leaving a blank page', 
   await settle();
   assert.match(app.node('#syncStatus').textContent, /逾時/);
   assert.match(app.node('#app').innerHTML, /Kyle 嘅錯題本/);
+});
+
+test('private mode never renders the bundled question bank before authentication', () => {
+  const app = boot('', undefined, {}, true);
+  assert.match(app.node('#app').innerHTML, /連接 GitHub 後/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /題在庫/);
+  assert.equal(app.saved.get('dse_quiz_sessions_v2'), undefined);
+});
+
+test('OAuth loads the private bank without copying questions into persistent storage', async () => {
+  const calls = [];
+  const app = boot('#/records?handoff=test', async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith('/auth/exchange')) return { ok: true, json: async () => ({ sessionId: 'test-session' }) };
+    if (url.endsWith('/bank')) return { ok: true, json: async () => app.context.QUIZ_DATA };
+    return { ok: true, json: async () => ({ data: null }) };
+  }, {}, true);
+  await settle();
+  assert.match(app.node('#app').innerHTML, /題在庫/);
+  assert.equal(calls.find(c => c.url.endsWith('/bank')).options.headers.Authorization, 'Bearer test-session');
+  assert.ok([...app.saved.keys()].every(key => !key.includes('bank')));
+  app.location.hash = '#/records'; app.events.hashchange();
+  app.events.storage({ key: 'dse_quiz_sync_session_v1', newValue: null });
+  app.saved.delete('dse_quiz_sync_session_v1');
+  app.location.hash = '#/practice/chem'; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /連接 GitHub 後/);
+});
+
+test('a denied private bank stays locked while existing records remain intact', async () => {
+  const records = [{ t: Date.now(), subj: 'chem', topic: 'T3', results: {} }];
+  const app = boot('', async () => ({ ok: false, status: 403 }), {
+    dse_quiz_sync_session_v1: 'test-session', dse_quiz_sessions_v2: JSON.stringify(records)
+  }, true);
+  await settle();
+  assert.match(app.node('#app').innerHTML, /未能讀取錯題庫/);
+  assert.deepEqual(JSON.parse(app.saved.get('dse_quiz_sessions_v2')), records);
+});
+
+test('private images are fetched with authorization and displayed using revocable local URLs', async () => {
+  const calls = [], revoked = [];
+  const app = boot('', async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith('/bank')) return { ok: true, json: async () => app.context.QUIZ_DATA };
+    return { ok: true, blob: async () => new Blob(['example-image']) };
+  }, { dse_quiz_sync_session_v1: 'test-session' }, true);
+  app.context.URL = { createObjectURL: () => 'blob:private-test-image', revokeObjectURL: url => revoked.push(url) };
+  const img = { getAttribute: () => 'images/chem-2022-mc-01.jpg', src: '' };
+  app.context.document.querySelectorAll = selector => selector === 'img[data-bank-image]' ? [img] : [];
+  await settle();
+  app.location.hash = '#/session/chem/T3'; app.events.hashchange();
+  await settle();
+  const image = calls.find(call => call.url.includes('/bank/images/'));
+  assert.equal(image.options.headers.Authorization, 'Bearer test-session');
+  assert.equal(image.options.cache, 'no-store');
+  assert.ok(!image.url.includes('test-session'));
+  assert.equal(img.src, 'blob:private-test-image');
+  app.saved.delete('dse_quiz_sync_session_v1');
+  app.events.storage({ key: 'dse_quiz_sync_session_v1', newValue: null });
+  assert.deepEqual(revoked, ['blob:private-test-image']);
 });

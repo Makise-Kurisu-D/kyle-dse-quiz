@@ -2,12 +2,21 @@ const SITE_ORIGIN = 'https://makise-kurisu-d.github.io';
 const SITE_HOME = `${SITE_ORIGIN}/kyle-dse-quiz/`;
 const REPO = 'Makise-Kurisu-D/kyle-dse-quiz-data';
 const DATA_PATH = 'records.json';
+const BANK_PATH = 'question-bank/bank.json';
+const OWNER = REPO.split('/')[0];
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8', ...headers },
   });
+}
+
+function configurationError(env, required) {
+  const missing = required.filter(name => name === 'SESSIONS'
+    ? !env.SESSIONS || typeof env.SESSIONS.get !== 'function' || typeof env.SESSIONS.put !== 'function'
+    : typeof env[name] !== 'string' || !env[name].trim());
+  return missing.length ? new Response(`Service setup is incomplete: ${missing.join(', ')}`, { status: 503 }) : null;
 }
 
 function encodeUtf8(value) {
@@ -213,6 +222,30 @@ export default {
       await env.SESSIONS.delete(handoffKey);
       return json({ sessionId }, 200, cors(request));
     }
+    if (url.pathname === '/bank' || url.pathname.startsWith('/bank/')) {
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, cors(request));
+      const image = url.pathname.match(/^\/bank\/images\/((?:chem|bio)-\d{4}-mc-\d+\.jpg)$/);
+      if (url.pathname !== '/bank' && !image) return json({ error: 'not_found' }, 404, cors(request));
+      const unavailable = configurationError(env, ['SESSION_SECRET', 'SESSIONS']);
+      if (unavailable) return json({ error: 'service_not_configured' }, 503, cors(request));
+      if (request.headers.get('Origin') !== SITE_ORIGIN) return json({ error: 'origin_denied' }, 403, cors(request));
+      try {
+        const auth = await tokenFor(request, env);
+        if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
+        const user = await github('/user', auth.token);
+        if (String(user.login).toLowerCase() !== OWNER.toLowerCase()) return json({ error: 'owner_only' }, 403, cors(request));
+        const path = image ? `question-bank/images/${image[1]}` : BANK_PATH;
+        const file = await github(`/repos/${REPO}/contents/${path}`, auth.token);
+        if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('invalid_bank_file');
+        if (!image) return json(JSON.parse(decodeUtf8(file.content)), 200, cors(request));
+        const binary = atob(file.content.replace(/\n/g, ''));
+        return new Response(Uint8Array.from(binary, char => char.charCodeAt(0)), {
+          headers: cors(request, { 'content-type': 'image/jpeg', 'x-content-type-options': 'nosniff' }),
+        });
+      } catch (error) {
+        return json({ error: 'bank_unavailable' }, [401, 403, 404].includes(error.status) ? error.status : 502, cors(request));
+      }
+    }
     if (url.pathname === '/sync' && ['GET', 'PUT', 'DELETE'].includes(request.method)) {
       if (request.headers.get('Origin') !== SITE_ORIGIN) return json({ error: 'origin_denied' }, 403, cors(request));
       const auth = await tokenFor(request, env);
@@ -262,4 +295,3 @@ export default {
     return json({ error: 'not_found' }, 404);
   },
 };
-
