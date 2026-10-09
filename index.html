@@ -30,7 +30,14 @@
   </button>
 </nav>
 
-<main class="app" id="app"><!-- 視圖由 app.js 渲染 --></main>
+<main class="app" id="app">
+  <section class="home"><div class="hero">
+    <div class="hero-kicker">DSE · 化學 / 生物</div>
+    <h1 class="hero-title">Kyle 嘅錯題本</h1>
+    <p class="hero-sub" id="startupStatus" role="status">正在載入題庫…</p>
+    <a class="btn btn-primary" href="./">重新載入主頁</a>
+  </div></section>
+</main>
 
 <!-- 手機底部標籤欄 -->
 <nav class="tabbar" id="tabbar">
@@ -48,7 +55,13 @@
 <div class="toast" id="toast" hidden></div>
 
 <script>window.QUIZ_SYNC_API="https://snowy-cake-a0a7.3355718646.workers.dev";</script>
+<script>
+window.addEventListener('error', function () {
+  var status = document.getElementById('startupStatus');
+  if (status) status.textContent = '頁面未能載入，請重新載入主頁。你的做題記錄仍然保留。';
+});
+</script>
 <script src="data.js"></script>
-<script src="app.js?v=747a4f57"></script>
+<script src="app.js?v=home-sync-20261009"></script>
 </body>
 </html>
