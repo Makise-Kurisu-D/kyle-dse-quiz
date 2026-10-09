@@ -70,6 +70,9 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   let putAttempts = 0;
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
+    if (url.startsWith('https://api.github.com/')) {
+      assert.equal(new Headers(init.headers).get('user-agent'), 'kyle-dse-quiz-sync');
+    }
     if (url === 'https://github.com/login/oauth/access_token') {
       return Response.json({ access_token: 'mock-access-token-which-is-long-enough-for-validation',
         refresh_token: 'mock-refresh-token', expires_in: 28800, refresh_token_expires_in: 15897600 });
@@ -99,6 +102,7 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   }), env);
   assert.equal(callback.status, 302);
   const redirect = new URL(callback.headers.get('location'));
+  assert.match(redirect.searchParams.get('v'), /^\d+$/);
   const handoff = new URLSearchParams(redirect.hash.split('?')[1]).get('handoff');
   assert.ok(handoff);
 
