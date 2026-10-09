@@ -253,7 +253,7 @@
     var days = REVIEW_DAYS[level];
     reviewPlan[id] = {
       level: level, interval: days, lastAt: at, dueAt: at + days * 864e5,
-      ratio: ratio, streak: passed ? (previous.streak || 0) + 1 : 0
+      ratio: ratio, streak: passed ? ((previous && previous.streak) || 0) + 1 : 0
     };
   }
   function reviewDue(id, now) {
