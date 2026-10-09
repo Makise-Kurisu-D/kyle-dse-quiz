@@ -111,6 +111,7 @@ async function github(path, token, init = {}) {
     ...init,
     headers: {
       accept: 'application/vnd.github+json',
+      'user-agent': 'kyle-dse-quiz-sync',
       authorization: `Bearer ${token}`,
       'x-github-api-version': '2022-11-28',
       ...(init.body ? { 'content-type': 'application/json' } : {}),
@@ -179,7 +180,7 @@ export default {
       if (!state || state !== saved.split('.')[0] || !(await verifyState(saved, env.SESSION_SECRET))) {
         return new Response('OAuth state check failed. Return to the quiz site and reconnect.', { status: 400 });
       }
-      if (url.searchParams.has('error')) return Response.redirect(`${SITE_HOME}#/records?sync=cancelled`, 302);
+      if (url.searchParams.has('error')) return Response.redirect(`${SITE_HOME}?v=${Date.now()}#/records?sync=cancelled`, 302);
       const exchange = await fetch('https://github.com/login/oauth/access_token', {
         method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' },
         body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET,
@@ -199,7 +200,7 @@ export default {
       });
       const handoff = await randomId();
       await env.SESSIONS.put(`handoff:${await digest(handoff)}`, sessionId, { expirationTtl: 120, metadata: { oneTime: true } });
-      const headers = new Headers({ location: `${SITE_HOME}#/records?sync=connected&handoff=${encodeURIComponent(handoff)}` });
+      const headers = new Headers({ location: `${SITE_HOME}?v=${Date.now()}#/records?sync=connected&handoff=${encodeURIComponent(handoff)}` });
       headers.append('set-cookie', 'dse_oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/auth/callback; Max-Age=0');
       return new Response(null, { status: 302, headers });
     }
