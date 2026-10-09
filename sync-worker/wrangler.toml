@@ -1,11 +1,11 @@
-name = "kyle-dse-quiz-sync"
+name = "snowy-cake-a0a7"
 main = "worker.js"
 compatibility_date = "2026-10-08"
 
 [[kv_namespaces]]
 binding = "SESSIONS"
-id = "REPLACE_WITH_YOUR_CLOUDFLARE_KV_NAMESPACE_ID"
+id = "abf716fb1a6b49338835370ac0026569"
 
 [vars]
-GITHUB_CLIENT_ID = "REPLACE_AFTER_CREATING_GITHUB_APP"
+GITHUB_CLIENT_ID = "Iv23liDCF1nzb5DgalhR"
 
