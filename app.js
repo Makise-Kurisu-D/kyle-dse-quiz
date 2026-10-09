@@ -13,6 +13,8 @@
   var LS_SYNCED_AT = 'dse_quiz_sync_at_v1';
   var SYNC_API = String(window.QUIZ_SYNC_API || '').replace(/\/+$/, '');
   var syncTimer = null, syncBusy = false;
+  var syncMessage = '';
+  var startupHash = location.hash;
   // 雙週重置：以 2026-10-05（一）00:00 本地為錨，每 14 日為一輪
   var CYCLE_MS = 14 * 24 * 3600 * 1000;
   var CYCLE_ANCHOR = new Date(2026, 9, 5, 0, 0, 0).getTime();
@@ -78,7 +80,7 @@
   function syncRequest(method, body) {
     var session = localStorage.getItem(LS_SYNC_SESSION);
     if (!SYNC_API || !session) return Promise.reject(new Error('未設定同步服務或尚未連接 GitHub'));
-    return fetch(SYNC_API + '/sync', {
+    return syncFetch('/sync', {
       method: method,
       headers: { 'Authorization': 'Bearer ' + session, 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
@@ -89,6 +91,15 @@
         return data;
       });
     });
+  }
+  function syncFetch(path, options) {
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, 15000);
+    return fetch(SYNC_API + path, Object.assign({}, options, { signal: controller.signal }))
+      .catch(function (err) {
+        if (err.name === 'AbortError') throw new Error('同步連線逾時，請稍後重試');
+        throw err;
+      }).finally(function () { clearTimeout(timer); });
   }
   function syncNow(mergeRemote) {
     if (syncBusy || !localStorage.getItem(LS_SYNC_SESSION) || !SYNC_API) return Promise.resolve(false);
@@ -113,25 +124,24 @@
     syncTimer = setTimeout(function () { syncNow(true); }, 1400);
   }
   function setSyncStatus(message) {
+    syncMessage = message;
     var el = $('#syncStatus');
-    if (el) el.textContent = message;
+    if (el) { el.textContent = message; el.hidden = false; }
   }
-  function initSync() {
-    var hash = location.hash;
+  function initSync(hash) {
     var handoff = (hash.match(/[?&]handoff=([^&]+)/) || [])[1];
     if (handoff && SYNC_API) {
-      history.replaceState(null, '', location.pathname + location.search + '#/records');
-      fetch(SYNC_API + '/auth/exchange', {
+      setSyncStatus('正在完成 GitHub 連接…');
+      syncFetch('/auth/exchange', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ handoff: decodeURIComponent(handoff) })
+        body: JSON.stringify({ handoff: handoff })
       }).then(function (r) { if (!r.ok) throw new Error('授权会话已失效'); return r.json(); })
         .then(function (data) {
           localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
           return syncNow(true);
         }).catch(function (err) { setSyncStatus('连接失败：' + err.message); });
     } else if (hash.indexOf('sync=cancelled') >= 0) {
-      history.replaceState(null, '', location.pathname + location.search + '#/records');
-      setTimeout(function () { setSyncStatus('已取消 GitHub 授权'); }, 0);
+      setSyncStatus('已取消 GitHub 授权');
     } else if (localStorage.getItem(LS_SYNC_SESSION)) {
       setTimeout(function () { syncNow(true); }, 600);
     }
@@ -139,6 +149,9 @@
   window.addEventListener('online', function () { syncNow(true); });
   window.addEventListener('focus', function () {
     if (localStorage.getItem(LS_SYNC_SESSION)) syncNow(true);
+  });
+  window.addEventListener('storage', function (event) {
+    if (event.key === LS_SYNC_SESSION && event.newValue) syncNow(true);
   });
 
   function cycleStartOf(ts) {
@@ -321,7 +334,7 @@
 
   /* ---------------- 路由 ---------------- */
   function route() {
-    var h = location.hash.replace(/^#/, '') || '/';
+    var h = location.hash.replace(/^#/, '').split('?')[0] || '/';
     var parts = h.split('/').filter(Boolean);
     var view = parts[0] || 'home';
     $all('.rail-item,.tab-item').forEach(function (a) {
@@ -377,6 +390,7 @@
           '<div class="hero-kicker">DSE · 化學 / 生物</div>' +
           '<h1 class="hero-title">Kyle 嘅錯題本</h1>' +
           '<p class="hero-sub">錯過嘅唔可以再錯 —— 逐課題清，每個踩分點都執返。</p>' +
+          '<p class="review-note" id="syncStatus" role="status" aria-live="polite"' + (syncMessage ? '' : ' hidden') + '>' + esc(syncMessage) + '</p>' +
           '<div class="hero-stat">' +
             '<span><b>' + totalItems + '</b> 題在庫</span>' +
             '<span><b class="c-green">' + conquered + '</b> 已征服</span>' +
@@ -988,10 +1002,10 @@
             (!SYNC_API ? '<button class="btn btn-ghost" id="syncConnectBtn" type="button" disabled>同步服务待部署</button>' :
               (localStorage.getItem(LS_SYNC_SESSION)
                 ? '<button class="btn btn-ghost" id="syncNowBtn" type="button">立即同步</button><button class="btn btn-ghost" id="syncDisconnectBtn" type="button">断开连接</button>'
-                : '<button class="btn btn-primary" id="syncConnectBtn" type="button">连接 GitHub</button>')) +
+                : '<a class="btn btn-primary" id="syncConnectBtn" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">连接 GitHub</a>')) +
           '</div></div>' +
           '<p class="review-note" id="syncStatus">' + esc(!SYNC_API ? '同步服务尚未部署。部署完成后，练习记录会自动备份到你的私有仓库。' :
-            (localStorage.getItem(LS_SYNC_SESSION) ? ('已连接 · 上次同步：' + (localStorage.getItem(LS_SYNCED_AT) ? new Date(localStorage.getItem(LS_SYNCED_AT)).toLocaleString() : '尚未同步')) : '连接后会合并本机与私有仓库的记录，之后自动同步。')) + '</p></div>' +
+            (localStorage.getItem(LS_SYNC_SESSION) ? ('已连接 · 上次同步：' + (localStorage.getItem(LS_SYNCED_AT) ? new Date(localStorage.getItem(LS_SYNCED_AT)).toLocaleString() : '尚未同步')) : '在新分頁連接 GitHub，原頁面會保留。完成後會合併記錄並自動同步。')) + '</p></div>' +
 
         '<div class="stat-cards">' +
           statCard('✍️', '累計作答', totalDone + ' 題') +
@@ -1031,7 +1045,7 @@
     $('#importDataFile').addEventListener('change', importData);
     var connectBtn = $('#syncConnectBtn');
     if (connectBtn && SYNC_API) connectBtn.addEventListener('click', function () {
-      location.href = SYNC_API + '/auth/start';
+      setSyncStatus('已開啟 GitHub 連接分頁；授權完成後會自動返回主頁並同步。');
     });
     var nowBtn = $('#syncNowBtn');
     if (nowBtn) nowBtn.addEventListener('click', function () { syncNow(true); });
@@ -1353,11 +1367,12 @@
     }
   });
 
+  history.replaceState(null, '', location.pathname + location.search + '#/');
   seedReviewPlan();
   normalizeReviewPlan();
-  initSync();
   if (ensureCycle()) {
     setTimeout(function () { toast('🔄 新嘅雙週開始，進度已重置！'); }, 300);
   }
   route();
+  initSync(startupHash);
 })();
