@@ -91,12 +91,25 @@
       headers: { 'Authorization': 'Bearer ' + session, 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
       cache: 'no-store'
-    }).then(function (r) {
-      return r.json().then(function (data) {
-        if (!r.ok) throw new Error(data.error || '同步失敗 (' + r.status + ')');
-        return data;
-      });
+    }).then(readSyncResponse);
+  }
+  function readSyncResponse(r) {
+    return Promise.resolve().then(function () { return r.json(); }).catch(function () { return {}; }).then(function (data) {
+      if (r.ok) return data;
+      var detail = data.error || '服務未回傳有效回應';
+      var message = detail;
+      if (r.status === 401) message = 'GitHub 連接已失效，請重新連接；本機記錄已保留';
+      else if (r.status === 403) message = 'GitHub 授權或存取被拒絕，請重新連接並檢查授權（' + detail + '）';
+      else if (detail === 'service_not_configured') message = '同步服務設定不完整';
+      throw Object.assign(new Error(message + ' [HTTP ' + r.status + ']'), { status: r.status });
     });
+  }
+  function expireConnection(err, session) {
+    if (err.status !== 401 || localStorage.getItem(LS_SYNC_SESSION) !== session) return;
+    localStorage.removeItem(LS_SYNC_SESSION);
+    forgetBank();
+    bankMessage = err.message;
+    route();
   }
   function syncFetch(path, options) {
     var controller = new AbortController();
@@ -110,6 +123,7 @@
   function syncNow(mergeRemote) {
     if (syncBusy || !localStorage.getItem(LS_SYNC_SESSION) || !SYNC_API) return Promise.resolve(false);
     syncBusy = true;
+    var session = localStorage.getItem(LS_SYNC_SESSION);
     setSyncStatus('同步中…');
     return syncRequest('GET').then(function (remote) {
       if (remote.data) mergeData(remote.data);
@@ -120,6 +134,7 @@
       if (location.hash.indexOf('/records') >= 0) renderRecords();
       return true;
     }).catch(function (err) {
+      expireConnection(err, session);
       setSyncStatus('同步失敗：' + err.message);
       return false;
     }).finally(function () { syncBusy = false; });
@@ -148,10 +163,7 @@
     route();
     bankPromise = syncFetch('/bank', {
       method: 'GET', headers: { Authorization: 'Bearer ' + session }, cache: 'no-store'
-    }).then(function (r) {
-      if (!r.ok) throw new Error(r.status === 404 ? '錯題庫服務尚未上線，請稍後重試' : '未能讀取錯題庫，請重新連接 GitHub');
-      return r.json();
-    }).then(function (bank) {
+    }).then(readSyncResponse).then(function (bank) {
       ['chem', 'bio'].forEach(function (code) {
         if (!bank.subjects || !bank.subjects[code] || !Array.isArray(bank.subjects[code].items) || !Array.isArray(bank.subjects[code].topics)) {
           throw new Error('錯題庫格式有誤');
@@ -165,7 +177,8 @@
       seedReviewPlan(); normalizeReviewPlan(); route();
       return true;
     }).catch(function (err) {
-      bankMessage = err.message; route(); return false;
+      expireConnection(err, session);
+      bankMessage = '未能讀取錯題庫：' + err.message; route(); return false;
     }).finally(function () { bankPromise = null; });
     return bankPromise;
   }
@@ -188,12 +201,15 @@
       if (imageUrls.has(path)) { img.src = imageUrls.get(path); return; }
       img.alt = '正在載入原題圖片';
       syncFetch('/bank/' + path, { method: 'GET', headers: { Authorization: 'Bearer ' + session }, cache: 'no-store' })
-        .then(function (r) { if (!r.ok) throw new Error('圖片載入失敗'); return r.blob(); })
+        .then(function (r) { if (!r.ok) return readSyncResponse(r); return r.blob(); })
         .then(function (blob) {
           if (!bankLoaded || localStorage.getItem(LS_SYNC_SESSION) !== session) return;
           if (!imageUrls.has(path)) imageUrls.set(path, URL.createObjectURL(blob));
           img.src = imageUrls.get(path); img.alt = '原題裁圖';
-        }).catch(function () { img.alt = '原題圖片未能載入，請重新進入練習'; });
+        }).catch(function (err) {
+          expireConnection(err, session);
+          img.alt = '原題圖片未能載入：' + err.message;
+        });
     });
   }
   function initSync(hash) {
@@ -1078,11 +1094,11 @@
           '<div class="record-tools">' +
             (!SYNC_API ? '<button class="btn btn-ghost" id="syncConnectBtn" type="button" disabled>同步服务待部署</button>' :
               (localStorage.getItem(LS_SYNC_SESSION)
-                ? '<button class="btn btn-ghost" id="syncNowBtn" type="button">立即同步</button><button class="btn btn-ghost" id="syncDisconnectBtn" type="button">断开连接</button>'
+                ? '<button class="btn btn-ghost" id="syncNowBtn" type="button">立即同步</button><a class="btn btn-ghost" id="syncConnectBtn" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">重新连接 GitHub</a><button class="btn btn-ghost" id="syncDisconnectBtn" type="button">断开连接</button>'
                 : '<a class="btn btn-primary" id="syncConnectBtn" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">连接 GitHub</a>')) +
           '</div></div>' +
-          '<p class="review-note" id="syncStatus">' + esc(!SYNC_API ? '同步服务尚未部署。部署完成后，练习记录会自动备份到你的私有仓库。' :
-            (localStorage.getItem(LS_SYNC_SESSION) ? ('已连接 · 上次同步：' + (localStorage.getItem(LS_SYNCED_AT) ? new Date(localStorage.getItem(LS_SYNCED_AT)).toLocaleString() : '尚未同步')) : '在新分頁連接 GitHub，原頁面會保留。完成後會合併記錄並自動同步。')) + '</p></div>' +
+          '<p class="review-note" id="syncStatus" role="status" aria-live="polite">' + esc(syncMessage || (!SYNC_API ? '同步服务尚未部署。部署完成后，练习记录会自动备份到你的私有仓库。' :
+            (localStorage.getItem(LS_SYNC_SESSION) ? ('已连接 · 上次同步：' + (localStorage.getItem(LS_SYNCED_AT) ? new Date(localStorage.getItem(LS_SYNCED_AT)).toLocaleString() : '尚未同步')) : '在新分頁連接 GitHub，原頁面會保留。完成後會合併記錄並自動同步。'))) + '</p></div>' +
 
         '<div class="stat-cards">' +
           statCard('✍️', '累計作答', totalDone + ' 題') +
@@ -1131,6 +1147,7 @@
       if (confirm('断开 GitHub 自动同步？本机及私有仓库的记录不会被删除。')) {
         localStorage.removeItem(LS_SYNC_SESSION);
         forgetBank();
+        syncMessage = ''; bankMessage = '';
         renderRecords();
       }
     });
