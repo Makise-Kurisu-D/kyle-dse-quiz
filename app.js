@@ -3,7 +3,13 @@
  */
 (function () {
   'use strict';
-  var DATA = window.QUIZ_DATA;
+  function emptyBank() {
+    return { subjects: { chem: { name: '化學', topics: [], items: [] }, bio: { name: '生物', topics: [], items: [] } } };
+  }
+  var PRIVATE_BANK = window.QUIZ_PRIVATE_BANK === true;
+  var DATA = PRIVATE_BANK ? emptyBank() : window.QUIZ_DATA;
+  var bankLoaded = !PRIVATE_BANK, bankPromise = null, bankMessage = '';
+  var imageUrls = new Map();
   var LS_SESS = 'dse_quiz_sessions_v2';
   var LS_DRAFT = 'dse_quiz_draft_v2';
   var LS_ARCHIVE = 'dse_quiz_archive_v1';
@@ -128,6 +134,68 @@
     var el = $('#syncStatus');
     if (el) { el.textContent = message; el.hidden = false; }
   }
+  function forgetBank() {
+    imageUrls.forEach(function (url) { URL.revokeObjectURL(url); });
+    imageUrls.clear();
+    if (PRIVATE_BANK) { DATA = emptyBank(); bankLoaded = false; }
+  }
+  function loadBank() {
+    if (!PRIVATE_BANK || bankLoaded) return Promise.resolve(true);
+    if (bankPromise) return bankPromise;
+    var session = localStorage.getItem(LS_SYNC_SESSION);
+    if (!session || !SYNC_API) return Promise.resolve(false);
+    bankMessage = '正在載入你的錯題庫…';
+    route();
+    bankPromise = syncFetch('/bank', {
+      method: 'GET', headers: { Authorization: 'Bearer ' + session }, cache: 'no-store'
+    }).then(function (r) {
+      if (!r.ok) throw new Error(r.status === 404 ? '錯題庫服務尚未上線，請稍後重試' : '未能讀取錯題庫，請重新連接 GitHub');
+      return r.json();
+    }).then(function (bank) {
+      ['chem', 'bio'].forEach(function (code) {
+        if (!bank.subjects || !bank.subjects[code] || !Array.isArray(bank.subjects[code].items) || !Array.isArray(bank.subjects[code].topics)) {
+          throw new Error('錯題庫格式有誤');
+        }
+        bank.subjects[code].items.forEach(function (it) {
+          if (it.img && !/^images\/(?:chem|bio)-\d{4}-mc-\d+\.jpg$/.test(it.img)) throw new Error('原題圖片路徑有誤');
+        });
+      });
+      if (localStorage.getItem(LS_SYNC_SESSION) !== session) return false;
+      DATA = bank; bankLoaded = true; bankMessage = '';
+      seedReviewPlan(); normalizeReviewPlan(); route();
+      return true;
+    }).catch(function (err) {
+      bankMessage = err.message; route(); return false;
+    }).finally(function () { bankPromise = null; });
+    return bankPromise;
+  }
+  function renderBankGate() {
+    $('#app').innerHTML = '<section class="home"><div class="hero">' +
+      '<div class="hero-kicker">DSE · 化學 / 生物</div><h1 class="hero-title">Kyle 嘅錯題本</h1>' +
+      '<p class="hero-sub">連接 GitHub 後即可讀取你的錯題庫和原題圖片。</p>' +
+      '<p class="review-note" id="syncStatus" role="status" aria-live="polite">' + esc(bankMessage || syncMessage || '你的做題記錄會保留。') + '</p>' +
+      (SYNC_API ? '<a class="btn btn-primary" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">連接 GitHub</a>' : '') +
+      (localStorage.getItem(LS_SYNC_SESSION) ? '<button class="btn btn-ghost" id="bankRetryBtn" type="button">重新載入</button>' : '') +
+      '<a class="btn btn-ghost" href="#/records">做題記錄</a></div></section>';
+    var retry = $('#bankRetryBtn');
+    if (retry) retry.addEventListener('click', function () { loadBank(); });
+  }
+  function hydratePrivateImages() {
+    if (!PRIVATE_BANK || !bankLoaded) return;
+    var session = localStorage.getItem(LS_SYNC_SESSION);
+    $all('img[data-bank-image]').forEach(function (img) {
+      var path = img.getAttribute('data-bank-image');
+      if (imageUrls.has(path)) { img.src = imageUrls.get(path); return; }
+      img.alt = '正在載入原題圖片';
+      syncFetch('/bank/' + path, { method: 'GET', headers: { Authorization: 'Bearer ' + session }, cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw new Error('圖片載入失敗'); return r.blob(); })
+        .then(function (blob) {
+          if (!bankLoaded || localStorage.getItem(LS_SYNC_SESSION) !== session) return;
+          if (!imageUrls.has(path)) imageUrls.set(path, URL.createObjectURL(blob));
+          img.src = imageUrls.get(path); img.alt = '原題裁圖';
+        }).catch(function () { img.alt = '原題圖片未能載入，請重新進入練習'; });
+    });
+  }
   function initSync(hash) {
     var handoff = (hash.match(/[?&]handoff=([^&]+)/) || [])[1];
     if (handoff && SYNC_API) {
@@ -138,11 +206,12 @@
       }).then(function (r) { if (!r.ok) throw new Error('授权会话已失效'); return r.json(); })
         .then(function (data) {
           localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
-          return syncNow(true);
+          return loadBank().then(function () { return syncNow(true); });
         }).catch(function (err) { setSyncStatus('连接失败：' + err.message); });
     } else if (hash.indexOf('sync=cancelled') >= 0) {
       setSyncStatus('已取消 GitHub 授权');
     } else if (localStorage.getItem(LS_SYNC_SESSION)) {
+      loadBank();
       setTimeout(function () { syncNow(true); }, 600);
     }
   }
@@ -151,7 +220,10 @@
     if (localStorage.getItem(LS_SYNC_SESSION)) syncNow(true);
   });
   window.addEventListener('storage', function (event) {
-    if (event.key === LS_SYNC_SESSION && event.newValue) syncNow(true);
+    if (event.key === LS_SYNC_SESSION) {
+      forgetBank(); route();
+      if (event.newValue) loadBank().then(function () { syncNow(true); });
+    }
   });
 
   function cycleStartOf(ts) {
@@ -341,10 +413,14 @@
       a.classList.toggle('active', a.dataset.route === view);
     });
     window.scrollTo(0, 0);
+    if (PRIVATE_BANK && !bankLoaded && view !== 'records') return renderBankGate();
     if (view === 'home') return renderHome();
     if (view === 'practice') return renderPractice(parts[1] || 'chem');
     if (view === 'random') return renderRandomPicker();
-    if (view === 'session') return renderSession(parts[1], decodeURIComponent(parts[2] || ''));
+    if (view === 'session') {
+      renderSession(parts[1], decodeURIComponent(parts[2] || ''));
+      return;
+    }
     if (view === 'records') return renderRecords();
     renderHome();
   }
@@ -651,6 +727,7 @@
       '</section>';
 
     bindSession(code, topic, dkey, renderItems, items, mcOnly);
+    hydratePrivateImages();
   }
 
   function questionHtml(it, idx, draft) {
@@ -666,7 +743,7 @@
     if (it.kind === 'mc') {
       var picked = draft.pick[it.id] || '';
       body =
-        (it.img ? '<img class="q-img" src="' + esc(it.img) + '" alt="原題裁圖">' :
+        (it.img ? '<img class="q-img" ' + (PRIVATE_BANK ? 'data-bank-image="' + esc(it.img) + '"' : 'src="' + esc(it.img) + '"') + ' alt="原題裁圖">' :
                   '<div class="q-stem">' + esc(it.stem) + '</div>') +
         '<div class="opts" data-id="' + esc(it.id) + '">' +
           ['A', 'B', 'C', 'D'].map(function (l) {
@@ -1053,6 +1130,7 @@
     if (disconnectBtn) disconnectBtn.addEventListener('click', function () {
       if (confirm('断开 GitHub 自动同步？本机及私有仓库的记录不会被删除。')) {
         localStorage.removeItem(LS_SYNC_SESSION);
+        forgetBank();
         renderRecords();
       }
     });

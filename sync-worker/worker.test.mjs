@@ -39,7 +39,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(preflight.headers.get('access-control-allow-origin'), ORIGIN);
 });
 
-test('the Worker responds through a local HTTP service', async t => {
+test('the Worker responds through a local HTTP service', { skip: process.env.QUIZ_SKIP_HTTP_TEST === '1' }, async t => {
   const env = { SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, GITHUB_CLIENT_ID: 'test-client' };
   const server = createServer(async (req, res) => {
     const headers = new Headers();
@@ -68,10 +68,18 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   const empty = { app: 'kyle-dse-quiz', version: 1, sessions: [], archive: [], drafts: {}, reviewPlan: {}, cycle: null };
   let file = { content: b64json(empty), sha: 'sha-1' };
   let putAttempts = 0;
+  let login = 'Makise-Kurisu-D', githubCalls = 0;
+  const bank = { subjects: { chem: { name: '化學', topics: [], items: [] }, bio: { name: '生物', topics: [], items: [] } } };
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     if (url.startsWith('https://api.github.com/')) {
+      githubCalls++;
       assert.equal(new Headers(init.headers).get('user-agent'), 'kyle-dse-quiz-sync');
+    }
+    if (url.endsWith('/user')) return Response.json({ login });
+    if (url.endsWith('/contents/question-bank/bank.json')) return Response.json({ encoding: 'base64', content: b64json(bank) });
+    if (url.endsWith('/contents/question-bank/images/chem-2022-mc-01.jpg')) {
+      return Response.json({ encoding: 'base64', content: btoa(String.fromCharCode(255, 216, 255, 217)) });
     }
     if (url === 'https://github.com/login/oauth/access_token') {
       return Response.json({ access_token: 'mock-access-token-which-is-long-enough-for-validation',
@@ -130,5 +138,39 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   assert.equal(putAttempts, 2, 'a concurrent GitHub SHA conflict is retried');
   assert.equal(fromB64json(file.content).sessions.length, 1);
   assert.equal(saved.headers.get('access-control-allow-origin'), ORIGIN);
+
+  const privateHeaders = { Origin: ORIGIN, Authorization: `Bearer ${sessionId}` };
+  const beforeDenied = githubCalls;
+  for (const [path, headers, status] of [
+    ['/bank', { Origin: ORIGIN }, 401],
+    ['/bank/images/chem-2022-mc-01.jpg', { Origin: ORIGIN }, 401],
+    ['/bank', { ...privateHeaders, Origin: 'https://attacker.example' }, 403],
+    ['/bank/images/records.json', privateHeaders, 404],
+    ['/bank/images/chem-2022-mc-01.jpg/extra', privateHeaders, 404],
+    ['/bank/images/%2e%2e%2frecords.json', privateHeaders, 404],
+  ]) {
+    const denied = await worker.fetch(new Request(BASE + path, { headers }), env);
+    assert.equal(denied.status, status, path);
+  }
+  assert.equal(githubCalls, beforeDenied, 'unauthorized requests never fetch private files');
+  const loaded = await worker.fetch(new Request(`${BASE}/bank`, { headers: privateHeaders }), env);
+  assert.equal(loaded.status, 200);
+  assert.equal(loaded.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await loaded.json(), bank);
+  const image = await worker.fetch(new Request(`${BASE}/bank/images/chem-2022-mc-01.jpg`, { headers: privateHeaders }), env);
+  assert.equal(image.status, 200);
+  assert.equal(image.headers.get('content-type'), 'image/jpeg');
+  assert.equal(image.headers.get('cache-control'), 'no-store');
+  assert.equal(image.headers.get('x-content-type-options'), 'nosniff');
+  assert.deepEqual([...new Uint8Array(await image.arrayBuffer())], [255, 216, 255, 217]);
+  login = 'someone-else';
+  const stranger = await worker.fetch(new Request(`${BASE}/bank`, { headers: privateHeaders }), env);
+  assert.equal(stranger.status, 403);
+  assert.equal((await stranger.json()).error, 'owner_only');
 });
 
+test('private bank fails closed when storage or secrets are not configured', async () => {
+  const response = await worker.fetch(new Request(`${BASE}/bank`, { headers: { Origin: ORIGIN } }), {});
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).error, 'service_not_configured');
+});
