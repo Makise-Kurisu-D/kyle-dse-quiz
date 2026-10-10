@@ -41,6 +41,79 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
+test('an expired session offers reconnection without deleting local records or uploading', async () => {
+  const records = [{ t: Date.now(), subj: 'chem', topic: 'T3', results: {} }];
+  const calls = [];
+  const app = boot('', async (_, options) => {
+    calls.push(options.method);
+    return { ok: false, status: 401, json: async () => ({ error: 'not_connected' }) };
+  }, { dse_quiz_sync_session_v1: 'expired-session', dse_quiz_sessions_v2: JSON.stringify(records) });
+  app.location.hash = '#/records'; app.events.hashchange();
+  app.node('#syncNowBtn').listeners.click();
+  await settle();
+  assert.deepEqual(calls, ['GET']);
+  assert.equal(app.saved.has('dse_quiz_sync_session_v1'), false);
+  assert.deepEqual(JSON.parse(app.saved.get('dse_quiz_sessions_v2')), records);
+  assert.match(app.node('#app').innerHTML, /id="syncConnectBtn"/);
+  assert.match(app.node('#syncStatus').textContent, /連接已失效.*HTTP 401/);
+  app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /連接已失效.*HTTP 401/);
+});
+
+test('a non-JSON service failure keeps the session and exposes its HTTP status across navigation', async () => {
+  const app = boot('', async () => ({ ok: false, status: 503, json: async () => { throw new SyntaxError('HTML'); } }), {
+    dse_quiz_sync_session_v1: 'valid-session'
+  });
+  app.location.hash = '#/records'; app.events.hashchange();
+  app.node('#syncNowBtn').listeners.click();
+  await settle();
+  assert.match(app.node('#syncStatus').textContent, /HTTP 503/);
+  assert.equal(app.saved.get('dse_quiz_sync_session_v1'), 'valid-session');
+  app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /HTTP 503/);
+  assert.match(app.node('#app').innerHTML, /重新连接 GitHub/);
+});
+
+test('an expired bank session locks the bank and preserves progress', async () => {
+  const progress = JSON.stringify([{ t: Date.now(), subj: 'chem', topic: 'T3', results: {} }]);
+  const app = boot('', async () => ({ ok: false, status: 401, json: async () => ({ error: 'not_connected' }) }), {
+    dse_quiz_sync_session_v1: 'expired-session', dse_quiz_sessions_v2: progress
+  }, true);
+  await settle();
+  assert.equal(app.saved.has('dse_quiz_sync_session_v1'), false);
+  assert.equal(app.saved.get('dse_quiz_sessions_v2'), progress);
+  assert.match(app.node('#app').innerHTML, /連接已失效/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /題在庫|bankRetryBtn/);
+});
+
+test('an image rejected for an expired session shows the reconnect gate', async () => {
+  const app = boot('', async url => {
+    if (url.endsWith('/bank')) return { ok: true, json: async () => app.context.QUIZ_DATA };
+    return { ok: false, status: 401, json: async () => ({ error: 'not_connected' }) };
+  }, { dse_quiz_sync_session_v1: 'expired-session' }, true);
+  const img = { getAttribute: () => 'images/chem-2022-mc-01.jpg', src: '' };
+  app.context.document.querySelectorAll = selector => selector === 'img[data-bank-image]' ? [img] : [];
+  await settle();
+  app.location.hash = '#/session/chem/T3'; app.events.hashchange();
+  await settle();
+  assert.equal(app.saved.has('dse_quiz_sync_session_v1'), false);
+  assert.match(app.node('#app').innerHTML, /連接 GitHub 後.*連接已失效/s);
+  assert.equal(img.src, '');
+});
+
+test('a delayed failure from an old session does not discard a new connection', async () => {
+  let rejectOld;
+  const app = boot('', () => new Promise(resolve => { rejectOld = resolve; }), {
+    dse_quiz_sync_session_v1: 'old-session'
+  });
+  app.location.hash = '#/records'; app.events.hashchange();
+  app.node('#syncNowBtn').listeners.click();
+  app.saved.set('dse_quiz_sync_session_v1', 'new-session');
+  rejectOld({ ok: false, status: 401, json: async () => ({ error: 'not_connected' }) });
+  await settle();
+  assert.equal(app.saved.get('dse_quiz_sync_session_v1'), 'new-session');
+});
+
 test('existing correct answers without a review plan do not break startup or OAuth sync', async () => {
   const sessions = [
     { t: 1791510000000, subj: 'chem', topic: 'T3', results: { 'old-mc': { ok: true, marks: 1, tot: 1 } } },
