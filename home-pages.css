@@ -19,3 +19,19 @@
  html[data-appearance=full] body[data-view=home] .home-details::before{content:'';position:absolute;inset:0 -20px;z-index:-1;background:linear-gradient(90deg,rgba(4,15,44,.86),rgba(5,27,69,.58)),var(--archive-art) right top / cover no-repeat;pointer-events:none}
  html[data-appearance=full][data-theme=night] body[data-view=home] .home-details::before{background:linear-gradient(90deg,rgba(45,8,29,.88),rgba(72,12,40,.58)),var(--archive-art) right top / cover no-repeat}
 }
+
+/* Spacious, shared answer and original-paper marking layout. */
+.marking-section{margin-top:1.25rem}
+.marking-section h4{margin:0 0 .65rem;font-size:1rem;line-height:1.5;color:inherit}
+.marking-list{list-style:none!important;margin:0!important;padding:0!important;display:grid;gap:.75rem}
+.marking-list li{display:flex;align-items:flex-start;gap:.7rem;margin:0!important;padding:.8rem 1rem;border:1px solid var(--line);border-radius:8px;background:var(--reading-surface);color:var(--ink);line-height:1.8;overflow-wrap:anywhere;min-width:0}
+.marking-bullet{font-size:1.25em;line-height:1.4;color:var(--green);flex:none}
+.marking-copy{flex:1;min-width:0}
+.marking-status{flex:none;align-self:flex-start;padding:.15rem .55rem;border:1px solid currentColor;border-radius:999px;font-size:.8rem;font-weight:700;white-space:nowrap}
+.marking-hit .marking-status{color:var(--green)}.marking-missed .marking-status{color:var(--red)}.marking-partial .marking-status{color:var(--gold)}
+.marking-note{margin-top:1rem;font-size:.9rem;line-height:1.7;color:var(--gray)}
+.marking-option{margin:.5rem 0;white-space:pre-line}
+.chk-form .chk-line{margin:.65rem 0;padding:.8rem;border:1px solid var(--line);border-radius:8px;background:var(--reading-surface)}
+@media(max-width:650px){.marking-list li{flex-wrap:wrap;padding:.75rem}.marking-status{margin-left:1.4rem}.marking-copy{flex-basis:calc(100% - 2rem)}}
+
+.marking-reason{display:block;margin-top:.45rem;font-size:.88em;line-height:1.7;color:var(--gray)}

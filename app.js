@@ -2476,11 +2476,7 @@
     h += '<div class="ans-block ans-deduct"><div class="ans-title"><span class="persona-icon persona-icon-warning" aria-hidden="true"></span> 錯因分析</div>' +
       '<div class="ans-body">' + esc(it.deduct || '—') + '</div></div>';
     h += '<div class="ans-block ans-correct"><div class="ans-title"><span class="persona-icon persona-icon-success" aria-hidden="true"></span> 正解詳解</div>' +
-      '<div class="ans-body">' + esc(it.kind === 'mc' ? (it.correctOpt || '—') : (it.correct || '—')) + '</div></div>';
-    if (it.points) {
-      h += '<div class="ans-block ans-points"><div class="ans-title"><span class="persona-icon persona-icon-notes" aria-hidden="true"></span> 評分備註</div>' +
-        '<div class="ans-body">' + esc(it.points) + '</div></div>';
-    }
+      '<div class="ans-body">' + window.DSELibrary.markingHtml(it) + '</div></div>';
     return h;
   }
 

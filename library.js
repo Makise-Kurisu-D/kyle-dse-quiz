@@ -15,6 +15,48 @@
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
   function text(value) { return esc(value).replace(/\n/g, '<br>'); }
+  // Split only explicit paragraph / semicolon boundaries; keep the source wording intact.
+  function explanationParts(value) {
+    return (String(value || '').match(/[^；;。\n]+[；;。]?/g) || []).map(function (v) { return v.trim(); }).filter(Boolean);
+  }
+  function explanationList(value) {
+    var parts = explanationParts(value);
+    return parts.length ? '<ul class="marking-list">' + parts.map(function (part) {
+      return '<li><span class="marking-bullet" aria-hidden="true">•</span><span>' + text(part) + '</span></li>';
+    }).join('') + '</ul>' : '';
+  }
+  function originalMarking(item) {
+    var rows = Array.isArray(item.originalMarking) ? item.originalMarking : [];
+    if (!rows.length && typeof item.points === 'string' && item.points.indexOf('\n') >= 0) {
+      var lines = item.points.split(/\n+/).map(function (line) { return line.trim(); }).filter(Boolean);
+      // Only treat a line as a scored criterion when each line explicitly records earned / possible.
+      if (lines.length && lines.every(function (line) { return /[：:]\s*\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?(?:[。；;]|$)/.test(line); })) {
+        rows = lines.map(function (line) {
+          var match = line.match(/[：:]\s*(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)(?:[。；;]|$)/);
+          return { text:line, earned:Number(match[1]), marks:Number(match[2]) };
+        });
+      }
+    }
+    return rows.filter(function (row) { return row && typeof row.text === 'string' && row.text.trim() && Number.isFinite(row.earned) && Number.isFinite(row.marks) && row.marks > 0 && row.earned >= 0 && row.earned <= row.marks; });
+  }
+  function markingHtml(item) {
+    var rows = originalMarking(item), correct = item.correct || '', option = item.correctOpt || '';
+    var h = '';
+    if (item.kind === 'mc' && option) h += '<div class="marking-section"><h4>正確選項與說明</h4>' + explanationList(option) + '</div>';
+    if (correct && correct !== option) h += '<div class="marking-section"><h4>解題詳解</h4>' + explanationList(correct) + '</div>';
+    if (rows.length) {
+      h += '<div class="marking-section"><h4>原卷逐點判分</h4><ul class="marking-list marking-scores">' + rows.map(function (row) {
+        var state = row.earned === row.marks ? 'hit' : row.earned === 0 ? 'missed' : 'partial';
+        var label = {hit:'已得',missed:'未得',partial:'部分得分'}[state];
+        return '<li class="marking-' + state + '"><span class="marking-bullet" aria-hidden="true">•</span><span class="marking-copy">' + text(row.text) + (row.reason ? '<small class="marking-reason">判分依據：' + text(row.reason) + '</small>' : '') + '</span><span class="marking-status">' + label + ' ' + row.earned + '/' + row.marks + '</span></li>';
+      }).join('') + '</ul></div>';
+    } else if (item.points && item.points !== correct && item.points !== option) {
+      h += '<div class="marking-section"><h4>評分參考</h4>' + explanationList(item.points) + '</div>';
+    }
+    if (!rows.length && item.kind !== 'mc') h += '<p class="marking-note">原卷未提供可逐項對應的得分狀態，請結合原答及錯因核對。</p>';
+    if (item.checks && item.checks.length) h += '<div class="marking-section"><h4>記憶與自查</h4><ul class="marking-list">' + item.checks.map(function (v) { return '<li><span class="marking-bullet" aria-hidden="true">•</span><span>' + text(v) + '</span></li>'; }).join('') + '</ul></div>';
+    return h || '<p>暫無詳解。</p>';
+  }
   function plainObject(value) { return !!value && typeof value === 'object' && !Array.isArray(value); }
   function blankSearch() { return { query:'', subject:'', year:'', kind:'', status:'', tag:'', limit:20 }; }
   function boundedLimit(value, fallback) { return Number.isInteger(value) && value > 0 ? Math.min(value, 1000) : fallback; }
@@ -555,9 +597,7 @@
       '<div class="ml-answer ml-answer-own"><h3>我的原答案</h3><p>' + own + '</p></div>' +
       '<div class="ml-answer ml-answer-deduct"><h3>扣分點與錯因</h3><p>' + text(item.deduct) + '</p></div>' +
       '<div class="ml-answer ml-answer-correct"><h3>正解與踩分點</h3>' +
-        (item.correctOpt || item.correct ? '<p>' + text(item.correctOpt || item.correct) + '</p>' : '') +
-        (item.points ? '<p>' + text(item.points) + '</p>' : '') +
-        (item.checks && item.checks.length ? '<ul>' + item.checks.map(function (p) { return '<li>' + text(p) + '</li>'; }).join('') + '</ul>' : '') + '</div>' +
+        markingHtml(item) + '</div>' +
       (row ? '<div class="ml-history"><h3>最近重做記錄</h3><p>與上方原卷答案分開記錄 · 連續全對 ' + row.streak + ' 次</p><ol>' +
         row.history.slice(-5).reverse().map(function (h) { return '<li>' + context.formatDate(h.t) + ' · ' +
           (h.correct ? '全對' : '未全對') + (h.tot ? ' · ' + esc(h.marks + '/' + h.tot) : '') + '</li>'; }).join('') + '</ol></div>' : '') +
@@ -726,6 +766,6 @@
   function reset() { clearReading(); context = null; activeKey = ''; memoryUser = ''; positions = {}; filters = {}; selectedYears = {};searchState=blankSearch(); topicGeneration++; }
   global.DSELibrary = { render: render, remember: remember, reset: reset, independentHistory: independentHistory, indexHistory: indexHistory, summarize: summarize, full: full, dailyCandidates: dailyCandidates, searchRows: searchRows,
     sourceInfo: sourceInfo, compareSources: compareSources, sourceYears: sourceYears, itemSource: itemSource, practiceRubric: practiceRubric, practiceScore: practiceScore, attemptSnapshot: attemptSnapshot, independentAttempt: independentAttempt,
-    drillHref:drillHref, conceptCards:conceptCards, submittedAnswers:submittedAnswers };
+    drillHref:drillHref, conceptCards:conceptCards, submittedAnswers:submittedAnswers, markingHtml:markingHtml };
 })(window);
 

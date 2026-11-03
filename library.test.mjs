@@ -304,3 +304,23 @@ test('personal reminders remain local, escaped and account-specific without chan
   f.window.localStorage={getItem:()=>'',setItem(){throw new Error('full');}};
   f.root.events.input({target});assert.match(status.textContent,/未能保存/);
 });
+
+test('answer layout separates original rubric status from explanations and never invents a score',()=>{
+  const item={kind:'sub',correct:'解法甲；解法乙',points:'補充條件',checks:['自查提醒'],originalMarking:[
+    {text:'第一點 <x>',earned:1,marks:1,reason:'已寫明'},
+    {text:'第二點',earned:0,marks:1,reason:'未寫明'},
+    {text:'第三點',earned:1,marks:2}
+  ]};
+  const html=library.markingHtml(item);
+  assert.match(html,/解題詳解/);assert.match(html,/原卷逐點判分/);assert.match(html,/已得 1\/1/);
+  assert.match(html,/未得 0\/1/);assert.match(html,/部分得分 1\/2/);
+  assert.match(html,/第一點 &lt;x&gt;/);assert.match(html,/判分依據：未寫明/);
+  assert.match(html,/記憶與自查/);assert.doesNotMatch(html,/原卷未提供/);
+  const unknown=library.markingHtml({kind:'sub',correct:'甲；乙',points:'甲1分；乙1分',checks:['提醒']});
+  assert.match(unknown,/原卷未提供可逐項對應/);assert.doesNotMatch(unknown,/marking-status/);
+  assert.equal((unknown.match(/class="marking-bullet"/g)||[]).length,5);
+  const legacy=library.markingHtml({kind:'sub',points:'甲：1/1。原答正確。\n乙：0/1。原答缺少。'});
+  assert.match(legacy,/已得 1\/1/);assert.match(legacy,/未得 0\/1/);
+  const mc=library.markingHtml({kind:'mc',correctOpt:'B',correct:'選B的理由；其他選項的理由'});
+  assert.match(mc,/正確選項與說明/);assert.match(mc,/其他選項的理由/);assert.doesNotMatch(mc,/原卷未提供/);
+});
