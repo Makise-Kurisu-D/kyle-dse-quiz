@@ -1916,3 +1916,35 @@ test('mock labels follow real papers numerically in both library and practice wi
   assert.match(app.node('#app').innerHTML, /value="2025">MOCK TEST 9/);
   assert.doesNotMatch(app.node('#mlQuestions').innerHTML, /2025 · Mock9/);
 });
+
+test('widget destinations survive password login without changing account data', async () => {
+  const destinations = ['#/library/books/concepts', '#/library/papers', '#/records'];
+  for (const destination of destinations) {
+    const app = boot(destination, async (url, options) => {
+      if (url.endsWith('/auth/password')) return { ok: true, json: async () => ({ sessionId: 'p'.repeat(43), userId: 'kyle' }) };
+      if (url.endsWith('/bank')) return { ok: true, json: async () => app.context.QUIZ_DATA };
+      if (url.endsWith('/papers/catalog')) return { ok: true, json: async () => ({ subjects: {}, papers: {} }) };
+      return { ok: true, json: async () => options.method === 'PUT' ? {} : { data: null } };
+    }, {}, true, true);
+    app.node('#syncUsername').value = 'Kyle';
+    app.node('#syncPassword').value = 'synthetic-password';
+    app.node('#passwordLoginForm').listeners.submit({ preventDefault() {} });
+    await settle(); await settle();
+    assert.equal(app.location.hash, destination);
+    assert.equal(app.saved.get('dse_quiz_user_v1'), 'kyle');
+    assert.ok(![...app.saved.values()].some(value => String(value).includes('synthetic-password')));
+  }
+});
+
+test('widget destination survives login when switching to the other student', async () => {
+  const app = boot('#/library/books/concepts', async () => ({ ok: true, json: async () => ({ sessionId: 'y'.repeat(43), userId: 'yeelam' }) }), {}, true, true);
+  let reloaded = false;
+  app.location.reload = () => { reloaded = true; };
+  app.node('#syncUsername').value = 'Yeelam';
+  app.node('#syncPassword').value = 'synthetic-password';
+  app.node('#passwordLoginForm').listeners.submit({ preventDefault() {} });
+  await settle();
+  assert.equal(reloaded, true);
+  assert.equal(app.location.hash, '#/library/books/concepts');
+  assert.equal(app.saved.get('dse_quiz_user_v1'), 'yeelam');
+});

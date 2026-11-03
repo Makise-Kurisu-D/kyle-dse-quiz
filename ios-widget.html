@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>iPhone 小組件 · DSE 錯題本</title>
+<meta name="description" content="將 DSE 錯題本的小組件加入 iPhone 主畫面。">
+<style>
+:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;background:#07172e;color:#f5f8ff}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 85% 0,#264b79 0,transparent 36%),#07172e;line-height:1.7}main{max-width:690px;margin:auto;padding:30px 22px 64px}.back{color:#b9cee7;text-decoration:none;font-size:14px}.eyebrow{color:#ffcd7c;letter-spacing:.16em;font-size:12px;font-weight:700;margin:46px 0 8px}h1{font-size:clamp(32px,8vw,48px);line-height:1.15;margin:0 0 14px}h2{font-size:19px;margin:30px 0 8px}p{color:#c4d2e2;margin:8px 0 16px}.card{background:#ffffff0b;border:1px solid #ffffff21;border-radius:20px;padding:18px 20px;margin:20px 0}.card strong{color:#fff}.actions{display:flex;gap:10px;flex-wrap:wrap;margin:22px 0}a.button,button{display:inline-block;background:#ffd07f;color:#17223a;border:0;border-radius:12px;padding:12px 18px;font-family:inherit;font-weight:700;font-size:15px;text-decoration:none;cursor:pointer}button.secondary,a.secondary{background:#ffffff16;color:#eef5ff;border:1px solid #ffffff35}ol{padding-left:1.5em;color:#d8e4ef}li{padding:0 0 12px 5px}code{font-family:ui-monospace,monospace;background:#ffffff13;border-radius:5px;padding:2px 5px}textarea{display:block;width:100%;height:150px;background:#071329;color:#d6e3f1;border:1px solid #7184a1;border-radius:10px;padding:10px;font:12px/1.5 ui-monospace,monospace;resize:vertical}#status{min-height:1.7em;color:#ffdc9d}small{color:#a9bbce}a{color:#ffda9c}summary{cursor:pointer;font-weight:700}
+</style>
+</head>
+<body><main>
+<a class="back" href="./#/">← 返回錯題本</a>
+<p class="eyebrow">DSE / HOME SCREEN</p>
+<h1>把複習放在<br>主畫面。</h1>
+<p>一眼看到北京日期，從主畫面打開錯題本。小號進入今日複習主頁；中號還可直接打開概念、批改卷和學習記錄。</p>
+<div class="card"><strong>開始之前</strong><p>這是由免費的 Scriptable App 承載的 iOS 小組件，適用於 Kyle 與 Yeelam。小組件不讀取或儲存帳號、密碼及私人學習資料；進入網站後按原有方式登入。</p></div>
+<h2>安裝一次</h2>
+<ol>
+<li>在 iPhone 安裝 <a href="https://apps.apple.com/app/scriptable/id1405459188">Scriptable</a>，然後回到此頁。</li>
+<li>按下「複製小組件程式」。打開 Scriptable，按右上角 <strong>＋</strong> 建立腳本，貼上程式，將名稱改為 <strong>DSE 錯題本</strong>，按完成儲存。</li>
+<li>在 iPhone 主畫面長按空白處，按「編輯」→「加入小組件」（部分 iOS 版本直接按「＋」），搜尋 <strong>Scriptable</strong>，選擇小號或中號並加入。</li>
+<li>長按新小組件，點「編輯小組件」，在 <strong>Script</strong> 選擇 <strong>DSE 錯題本</strong>。點空白處完成，然後點小組件打開網站。</li>
+</ol>
+<div class="actions"><button type="button" id="copy">複製小組件程式</button><a class="button secondary" href="https://apps.apple.com/app/scriptable/id1405459188">取得 Scriptable ↗</a></div>
+<p id="status" role="status" aria-live="polite">正在準備程式…</p>
+<details><summary>無法自動複製？手動全選程式</summary><p>長按下方文字，選擇「全選」再複製。</p><textarea id="code" readonly aria-label="小組件程式"></textarea><p><a href="./ios-widget.js">開啟程式原始碼</a></p></details>
+<h2>使用提示</h2>
+<p>小號整個區域打開網站主頁；中號右側三個入口可分別點按。首次開啟或登入過期時，先在網頁登入自己的帳號。網站會使用打開它的瀏覽器的登入狀態；如果之前只在「加入主畫面」的獨立網頁登入，瀏覽器可能需要再登入一次。</p>
+<p>小組件不顯示待複習數字，因為它無法直接讀取網頁的私人登入狀態；實際進度以網站為準。日期和日夜配色按北京時間顯示，iOS 決定實際刷新時間，跨日後可能稍有延遲。</p>
+<small>更新程式時，可重新複製並覆蓋 Scriptable 中的原腳本。</small>
+</main>
+<script>
+(function(){
+  var field=document.getElementById('code'),status=document.getElementById('status'),button=document.getElementById('copy');
+  button.disabled=true;
+  fetch('./ios-widget.js',{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('load');return r.text();}).then(function(code){field.value=code;button.disabled=false;status.textContent='程式已準備好。';}).catch(function(){status.textContent='程式載入失敗，請重新整理，或展開下方連結手動複製。';});
+  button.addEventListener('click',function(){
+    function manual(){document.querySelector('details').open=true;field.focus();field.select();field.setSelectionRange(0,field.value.length);status.textContent='請長按文字並選擇「全選」與「複製」。';}
+    if(!field.value)return;
+    if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(field.value).then(function(){status.textContent='已複製。請到 Scriptable 建立腳本並貼上。';},manual);else manual();
+  });
+})();
+</script>
+</body></html>

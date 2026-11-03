@@ -358,7 +358,8 @@
           authenticated = true;
           setSyncStatus('已登入，正在背景同步…');
           forgetBank(); bankMessage = '';
-          location.hash = '#/';
+          // Keep a safe destination opened before login (including widget shortcuts).
+          location.hash = study.safeRoute(location.hash);
           route();
           return Promise.all([loadBank(), syncNow(true)]);
         }).catch(function (err) {
