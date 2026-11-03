@@ -17,7 +17,7 @@ html[data-appearance=full][data-theme=night] .preview-banner{background:#45142e;
 
 /* 預覽二：把首頁重新編排成不對稱的遊戲選單。 */
 html[data-appearance=full][data-theme=day] body[data-view=home] .visual-world{background:radial-gradient(ellipse at 70% 20%,#38cfff 0,#0577d5 31%,#033c8b 68%,#061b49 100%)}
-html[data-appearance=full][data-theme=day] body[data-view=home] .visual-world:after{display:block;background:repeating-linear-gradient(116deg,transparent 0 110px,#8beeff0b 112px 115px,transparent 118px 210px),linear-gradient(90deg,#061737e8 0%,#0349927a 55%,#00265342 100%)}
+html[data-appearance=full][data-theme=day] body[data-view=home] .visual-world:after{display:block;background:linear-gradient(90deg,#061737e8 0%,#0349927a 55%,#00265342 100%)}
 html[data-appearance=full][data-theme=day] body[data-view=home] .visual-character{opacity:.55;filter:saturate(.8) contrast(1.05);background-position:85% top}
 html[data-appearance=full] body[data-view=home] .home-stage{position:relative;grid-template-columns:minmax(300px,.9fr) minmax(380px,1.15fr);gap:3vw;align-items:center;min-height:650px;isolation:isolate}
 html[data-appearance=full] body[data-view=home] .home-stage:before{content:'RELOAD / REVIEW';position:absolute;top:0;left:0;color:#b2f5ff;font:900 italic 13px sans-serif;letter-spacing:.35em}

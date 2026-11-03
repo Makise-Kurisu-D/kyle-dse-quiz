@@ -1,6 +1,10 @@
 /* Learning controls inherit the site's existing artwork, palette and frame shapes. */
 .home-quick-links,.rp-actions,.saved-review-links{display:flex;flex-wrap:wrap;gap:10px}
 .home-quick-links{margin-top:18px}.home-resume{margin-top:16px}
+html[data-appearance=full] body[data-view=home] .home-quick-links{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:min(340px,100%);gap:6px;margin-top:14px}
+html[data-appearance=full] body[data-view=home] .home-quick-links .btn{display:flex;align-items:center;justify-content:center;min-width:0;min-height:44px;padding:8px 3px;font-size:12px;white-space:nowrap}
+html[data-appearance=full] body[data-view=home] .home-info{width:min(340px,100%)}
+@media(min-width:861px){html[data-appearance=full] body[data-view=home] .home-stage{grid-template-columns:minmax(0,1fr) minmax(0,.85fr);gap:clamp(30px,6vw,96px)}}
 .saved-review-links{justify-content:center;margin:20px 0}
 .question-jump{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
 .question-jump a{display:grid;place-items:center;min-width:40px;min-height:40px;padding:5px 10px;border:1px solid var(--line);color:var(--ink);background:var(--card);border-radius:var(--radius);font-weight:700;text-decoration:none}
@@ -37,13 +41,14 @@ html[data-appearance=full] body[data-view=session] .q-stem{max-width:82ch}
 html[data-appearance=full][data-theme=day] :is(.paper-review-panel,.question-jump a){border-radius:0}
 html[data-theme=night] .paper-zoom{border-radius:16px}
 @media(max-width:860px){
- html[data-appearance=full] body[data-view=home] .home-stage .hero{order:0;padding:10px 0 18px;align-self:stretch;max-width:none}
- html[data-appearance=full] body[data-view=home] .home-stage .tile-grid{order:1}
+ html[data-appearance=full] body[data-view=home] .home-stage .hero{order:1;padding:20px 0 18px;align-self:stretch;max-width:none}
+ html[data-appearance=full] body[data-view=home] .home-stage .tile-grid{order:0}
  html[data-appearance=full] body[data-view=home] .home-stage .hero-title{margin:8px 0 18px}
  html[data-appearance=full] body[data-view=home] .hero-en{font-size:54px}
  html[data-appearance=full] body[data-view=home] .preview-due strong{font-size:60px}
  html[data-appearance=full] body[data-view=home] .home-info{margin-top:16px}
- .home-quick-links .btn{flex:1 1 90px;min-height:44px;padding:8px}
+ .home-quick-links{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;width:100%}
+ .home-quick-links .btn{min-width:0;min-height:44px;padding:8px 3px;font-size:12px;white-space:nowrap}
  .today-controls{flex-wrap:wrap}.today-controls label{min-width:110px;flex:1}
  .today-controls select{width:100%}
  .inventory-layout{display:flex;flex-direction:column}.inventory-topics{order:0;width:100%}.inventory-years{order:1;width:100%}
