@@ -11,7 +11,7 @@ const data = 'window.QUIZ_DATA = ' + JSON.stringify({ subjects: {
   ] }, bio: { name: '生物', topics: [], items: [] }
 } });
 function boot(hash = '', fetch = async () => { throw new Error('offline'); }, initialStorage = {}, privateBank = false, passwordAuth = false, now = null) {
-  const nodes = new Map(), events = {}, timers = [], intervals = [], saved = new Map(Object.entries(initialStorage));
+  const nodes = new Map(), events = {}, documentEvents = {}, timers = [], intervals = [], saved = new Map(Object.entries(initialStorage));
   function node(selector) {
     if (!nodes.has(selector)) nodes.set(selector, {
       innerHTML: '', textContent: '', hidden: false, listeners: {},
@@ -19,6 +19,7 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
       classList: { toggle() {}, add() {}, remove() {} },
       style: { setProperty() {} }, setAttribute(k, v) { this[k] = v; }, removeAttribute(k) { delete this[k]; },
       focus() { this.focused = true; },
+      scrollIntoView() {},
       removeEventListener(type, fn) { if (this.listeners[type] === fn) delete this.listeners[type]; },
       addEventListener(type, fn) { this.listeners[type] = fn; },
       querySelector: node, querySelectorAll: () => [],
@@ -32,7 +33,9 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
   };
   const context = {
     console, AbortController, fetch, location, Date: Clock,
-    document: { querySelector: node, querySelectorAll: () => [], addEventListener() {} },
+    document: { querySelector: node, querySelectorAll: () => [], addEventListener(type, fn) {
+      (documentEvents[type] || (documentEvents[type] = [])).push(fn);
+    } },
     localStorage: { getItem: k => saved.get(k) ?? null, setItem: (k, v) => saved.set(k, v), removeItem: k => saved.delete(k) },
     history: { replaceState(_, __, url) { location.hash = url.slice(url.indexOf('#')); } },
     setTimeout(fn, delay) { timers.push({ fn, delay }); return timers.length; },
@@ -47,12 +50,220 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
   vm.createContext(context);
   vm.runInContext(data, context);
   vm.runInContext(readFileSync(new URL('./subject-config.js', import.meta.url), 'utf8'), context);
+  vm.runInContext(readFileSync(new URL('./study-experience.js', import.meta.url), 'utf8'), context);
 vm.runInContext(readFileSync(new URL('./library.js', import.meta.url), 'utf8'), context);
   vm.runInContext(readFileSync(new URL('./paper-reader.js', import.meta.url), 'utf8'), context);
   vm.runInContext(source, context);
-  return { context, location, nodes, node, saved, timers, intervals, events };
+  return { context, location, nodes, node, saved, timers, intervals, events, documentEvents };
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test('confirming submitted answer A preserves newer answer B merged from another device', async () => {
+  const at=Date.now(), key='chem:T3';let finishRead;
+  const app=boot('', (url, options) => options.method==='GET'
+    ? new Promise(resolve=>{finishRead=resolve;})
+    : Promise.resolve({ok:true,json:async()=>({savedAt:new Date().toISOString()})}), {
+      dse_quiz_sync_session_v1:'synthetic-session',dse_quiz_auth_mode_v1:'password',
+      dse_quiz_draft_v2:JSON.stringify({[key]:{pick:{'example-mc':'A'},text:{},paper:{},changedAt:{'pick:example-mc':at}}})
+    });
+  app.location.hash='#/session/chem/T3';app.events.hashchange();
+  app.node('#submitBtn').listeners.click();
+  app.timers.find(timer=>timer.delay===0).fn();
+  finishRead({ok:true,json:async()=>({data:{app:'kyle-dse-quiz',version:1,sessions:[],archive:[],
+    drafts:{[key]:{pick:{'example-mc':'B'},text:{},paper:{},steps:{},changedAt:{'pick:example-mc':at+1000},deletedAt:0}},
+    reviewPlan:{},aiReviews:{},cycle:app.saved.get('dse_quiz_cycle_v1')}})});
+  await settle();
+  app.node('#saveSessionBtn').listeners.click();
+  const records=JSON.parse(app.saved.get('dse_quiz_sessions_v2'));
+  const drafts=JSON.parse(app.saved.get('dse_quiz_draft_v2'));
+  assert.equal(records.length,1);
+  assert.equal(records[0].results['example-mc'].attempt.answer,'A');
+  assert.equal(drafts[key].pick['example-mc'],'B');
+  assert.match(app.node('#resultPanel').innerHTML,/繼續其餘 1 題/);
+});
+
+test('mobile can explicitly choose subjective practice without being forced back to MC', () => {
+  const app=boot();
+  app.context.matchMedia=()=>({matches:true});
+  app.context.QUIZ_DATA.subjects.chem.items.push({id:'synthetic-sub',kind:'sub',topic:'T3',year:'2022',qref:'Q2(a)',stem:'合成大題',marks:2,checks:['合成給分要點']});
+  app.location.hash='#/today/chem/1?kind=sub';app.events.hashchange();
+  assert.match(app.node('#app').innerHTML,/合成大題/);
+  assert.match(app.node('#app').innerHTML,/data-kind="sub"/);
+  assert.doesNotMatch(app.node('#app').innerHTML,/本課題以大題為主/);
+});
+
+test('explicit drill links preserve selection order and exclude other topics and stale IDs', () => {
+  const app = boot();
+  app.context.QUIZ_DATA.subjects.chem.items.push({id:'second',kind:'mc',topic:'other',year:'2021',qref:'MC2',stem:'第二道合成題',correctOpt:'B'});
+  app.location.hash = '#/drill/chem?ids=second,missing,example-mc,second&back=%23%2Frecords';
+  app.events.hashchange();
+  const html = app.node('#app').innerHTML;
+  assert.ok(html.indexOf('第二道合成題') < html.indexOf('原題裁圖'));
+  assert.equal((html.match(/class="sq" id=/g) || []).length, 2);
+  assert.match(html, /href="#\/records">← 暫停／返回/);
+  assert.doesNotMatch(html,/PRIVATE_CORRECT/);
+});
+
+test('partial submission saves only completed answers and leaves the rest of the task available', () => {
+  const draft = {pick:{'example-mc':'A'},text:{},paper:{},changedAt:{'pick:example-mc':Date.now()}};
+  const app = boot('', undefined, {dse_quiz_draft_v2:JSON.stringify({'chem:T3':draft})});
+  app.context.QUIZ_DATA.subjects.chem.items.push({id:'unfinished',kind:'mc',topic:'T3',year:'2022',qref:'MC2',stem:'另一道合成題',correctOpt:'B'});
+  app.location.hash = '#/session/chem/T3';app.events.hashchange();
+  app.node('#submitAnsweredBtn').listeners.click();
+  app.node('#saveSessionBtn').listeners.click();
+  const sessions=JSON.parse(app.saved.get('dse_quiz_sessions_v2'));
+  assert.deepEqual(Object.keys(sessions[0].results),['example-mc']);
+  assert.equal(sessions[0].results['example-mc'].attempt.answer,'A');
+  assert.match(app.node('#resultPanel').innerHTML,/繼續其餘 1 題/);
+  assert.match(app.node('#resultPanel').innerHTML,/未完成|結束本次/);
+  assert.equal(app.saved.get('dse_quiz_pending_review_v1'),undefined);
+  const task=JSON.parse(app.saved.get('dse_quiz_task_v1'));
+  assert.deepEqual(task.ids,['unfinished']);
+});
+
+test('saving an old submitted snapshot preserves a newer answer received from another device', async () => {
+  const now = Date.now();
+  const original = { pick: { 'example-mc': 'A' }, text: {}, paper: {},
+    changedAt: { 'pick:example-mc': now - 1000 } };
+  const newer = { pick: { 'example-mc': 'B' }, text: {}, paper: {},
+    changedAt: { 'pick:example-mc': now + 1000 } };
+  const remote = { app: 'kyle-dse-quiz', version: 1, sessions: [], archive: [],
+    drafts: { 'chem:T3': newer }, reviewPlan: {}, aiReviews: {} };
+  const app = boot('#/session/chem/T3', async (_url, options) => ({
+    ok: true, json: async () => options.method === 'GET'
+      ? { data: remote, sha: 'synthetic-remote-version' } : { sha: 'synthetic-saved-version' },
+  }), {
+    dse_quiz_sync_session_v1: 'valid-session',
+    dse_quiz_draft_v2: JSON.stringify({ 'chem:T3': original }),
+  });
+  app.node('#submitBtn').listeners.click();
+  assert.equal(JSON.parse(app.saved.get('dse_quiz_pending_review_v1')).draft.pick['example-mc'], 'A');
+  app.timers.find(timer => timer.delay === 0).fn();
+  await settle(); await settle();
+  assert.equal(JSON.parse(app.saved.get('dse_quiz_draft_v2'))['chem:T3'].pick['example-mc'], 'B');
+  app.node('#saveSessionBtn').listeners.click();
+  const records = JSON.parse(app.saved.get('dse_quiz_sessions_v2'));
+  assert.equal(records.length, 1);
+  assert.equal(records[0].results['example-mc'].attempt.answer, 'A', 'the result must use the locked submission');
+  const draft = JSON.parse(app.saved.get('dse_quiz_draft_v2'))['chem:T3'];
+  assert.equal(draft.pick['example-mc'], 'B', 'saving old grading must not clear the newer draft');
+  assert.equal(draft.changedAt['pick:example-mc'], newer.changedAt['pick:example-mc']);
+  const task = JSON.parse(app.saved.get('dse_quiz_task_v1'));
+  assert.deepEqual(task.ids, ['example-mc']);
+  assert.match(app.node('#resultPanel').innerHTML, /id="resumeRemaining"/);
+  app.location.hash = task.href; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /class="opt picked" data-l="B"/);
+  assert.equal(JSON.parse(app.saved.get('dse_quiz_sessions_v2')).length, 1, 'reopening the draft is not another submitted attempt');
+});
+
+test('an explicit subjective daily-review selection on a phone is not filtered back to MC-only', () => {
+  const app = boot();
+  app.context.matchMedia = () => ({ matches: true });
+  Object.assign(app.context.QUIZ_DATA.subjects.chem.items[0], {
+    kind: 'sub', marks: 1, checks: ['合成核對點'],
+  });
+  app.location.hash = '#/today/chem/1?kind=sub'; app.events.hashchange();
+  const html = app.node('#app').innerHTML;
+  assert.match(html, /data-kind="sub"/);
+  assert.match(html, /class="page session"/);
+  assert.doesNotMatch(html, /本課題以大題為主|目前沒有符合這個題型/);
+});
+
+test('clearing progress also removes pending grading so reopening a task cannot resurrect old answers', () => {
+  const draft = { pick: { 'example-mc': 'A' }, text: {}, paper: {} };
+  const app = boot('#/session/chem/T3', undefined, {
+    dse_quiz_draft_v2: JSON.stringify({ 'chem:T3': draft }),
+  });
+  app.node('#submitBtn').listeners.click();
+  assert.ok(app.saved.has('dse_quiz_pending_review_v1'));
+  assert.ok(app.saved.has('dse_quiz_task_v1'));
+  app.documentEvents.click.forEach(handler => handler({ target: {
+    closest(selector) { return selector === '#railReset' ? {} : null; },
+  } }));
+  for (const key of ['dse_quiz_draft_v2', 'dse_quiz_pending_review_v1', 'dse_quiz_task_v1']) {
+    assert.equal(app.saved.has(key), false, key + ' must be cleared');
+  }
+  assert.doesNotMatch(app.node('#app').innerHTML, /id="resumeStudy"/);
+  app.location.hash = '#/session/chem/T3'; app.events.hashchange();
+  assert.equal(app.saved.has('dse_quiz_pending_review_v1'), false, 'old grading must not restore');
+  assert.doesNotMatch(app.node('#app').innerHTML, /class="opt picked"/);
+  app.node('#submitBtn').listeners.click();
+  assert.equal(app.saved.has('dse_quiz_pending_review_v1'), false, 'blank answers must still be rejected');
+  assert.equal(app.saved.has('dse_quiz_sessions_v2'), false);
+});
+
+test('tombstoned answers neither appear selected nor pass full or partial submission checks', () => {
+  const draft = { pick: { 'example-mc': 'A' }, text: {}, paper: {},
+    changedAt: { 'pick:example-mc': 100 }, deletedAt: 200 };
+  const app = boot('#/session/chem/T3', undefined, {
+    dse_quiz_draft_v2: JSON.stringify({ 'chem:T3': draft }),
+  });
+  assert.doesNotMatch(app.node('#app').innerHTML, /class="opt picked"/);
+  assert.equal(app.node('#answeredCount').textContent, 0);
+  assert.equal(app.node('#submitAnsweredBtn').disabled, true);
+  app.node('#submitBtn').listeners.click();
+  app.node('#submitAnsweredBtn').listeners.click();
+  assert.equal(app.saved.has('dse_quiz_pending_review_v1'), false);
+  assert.equal(app.saved.has('dse_quiz_sessions_v2'), false);
+});
+
+test('refreshing pending self-assessment preserves the submitted answer and chosen score until explicit save', () => {
+  function subjectQuestion(app) {
+    Object.assign(app.context.QUIZ_DATA.subjects.chem.items[0], {
+      kind: 'sub', marks: 2, checks: ['第一個合成給分點', '第二個合成給分點'],
+    });
+  }
+  function assessmentInputs(app) {
+    const panel = app.node('#resultPanel'), form = app.node('synthetic-check-form');
+    const manual = app.node('synthetic-manual-score');
+    manual.type = 'number'; manual.value = '';
+    form.dataset = { id: 'example-mc' };
+    form.querySelectorAll = () => [];
+    form.querySelector = selector => selector === '.manual-score' ? manual : app.node(selector);
+    panel.querySelector = selector => selector.startsWith('.chk-form[data-id=') ? form : app.node(selector);
+    panel.querySelectorAll = selector => selector === '.chk-form' ? [form] : selector === '.chk-form input' ? [manual] : [];
+    return manual;
+  }
+  const draft = { pick: {}, text: { 'example-mc': '這是提交時的合成原答' }, paper: {} };
+  const first = boot('#/', undefined, { dse_quiz_draft_v2: JSON.stringify({ 'chem:T3': draft }) });
+  subjectQuestion(first); const score = assessmentInputs(first);
+  first.location.hash = '#/session/chem/T3'; first.events.hashchange();
+  first.node('#submitBtn').listeners.click();
+  score.value = '1'; score.listeners.input();
+  assert.equal(JSON.parse(first.saved.get('dse_quiz_pending_review_v1')).scores['example-mc'].marks, 1);
+  assert.equal(first.saved.has('dse_quiz_sessions_v2'), false, 'self-assessment is not yet a saved attempt');
+  const restored = boot('#/', undefined, Object.fromEntries(first.saved));
+  subjectQuestion(restored); const restoredScore = assessmentInputs(restored);
+  restored.location.hash = '#/session/chem/T3'; restored.events.hashchange();
+  assert.equal(restoredScore.value, 1, 'the numeric input receives the previous self-assessment');
+  const pending = JSON.parse(restored.saved.get('dse_quiz_pending_review_v1'));
+  assert.equal(pending.draft.text['example-mc'], '這是提交時的合成原答');
+  assert.equal(pending.scores['example-mc'].marks, 1);
+  assert.equal(restored.saved.has('dse_quiz_sessions_v2'), false);
+  restored.node('#saveSessionBtn').listeners.click();
+  const records = JSON.parse(restored.saved.get('dse_quiz_sessions_v2'));
+  assert.equal(records.length, 1); assert.equal(records[0].results['example-mc'].marks, 1);
+  assert.equal(records[0].results['example-mc'].attempt.answer, '這是提交時的合成原答');
+  assert.equal(restored.saved.has('dse_quiz_pending_review_v1'), false);
+  restored.node('#saveSessionBtn').listeners.click();
+  assert.equal(JSON.parse(restored.saved.get('dse_quiz_sessions_v2')).length, 1, 'saving twice in one panel is idempotent');
+});
+
+test('fortnight rollover archives reports without clearing unfinished answers or independent plans', () => {
+  const now=Date.UTC(2026,10,2), before=now-20*864e5;
+  const draft={'chem:T3':{pick:{'example-mc':'B'},text:{},paper:{},changedAt:{'pick:example-mc':before}}};
+  const app=boot('',undefined,{dse_quiz_cycle_v1:String(before),dse_quiz_draft_v2:JSON.stringify(draft)},false,false,now);
+  assert.deepEqual(JSON.parse(app.saved.get('dse_quiz_draft_v2')),draft);
+  assert.match(app.node('#app').innerHTML,/繼續未完成的作答/);
+});
+
+test('a new unsuccessful attempt schedules a short corrective check without granting mastery', () => {
+  const app=boot('',undefined,{dse_quiz_draft_v2:JSON.stringify({'chem:T3':{pick:{'example-mc':'D'},text:{},paper:{}}})});
+  app.location.hash='#/session/chem/T3';app.events.hashchange();
+  app.node('#submitBtn').listeners.click();app.node('#saveSessionBtn').listeners.click();
+  const plan=JSON.parse(app.saved.get('dse_quiz_review_v1'))['example-mc'];
+  assert.equal(plan.interval,2);assert.equal(plan.dueAt-plan.lastAt,2*864e5);assert.equal(plan.streak,0);
+});
 
 function structuredQuestion(app) {
   const item = app.context.QUIZ_DATA.subjects.chem.items[0];
@@ -733,12 +944,12 @@ test('password login starts cloud sync while the private bank is still loading',
   assert.match(app.node('#app').innerHTML, /題在庫/);
 });
 
-test('a returning browser opens home before either private request completes and updates after each one', async () => {
+test('a returning home browser renders before either private request completes and updates after each one', async () => {
   const calls = [], cycle = boot().saved.get('dse_quiz_cycle_v1');
   let finishBank, finishSync;
   const remote = { app: 'kyle-dse-quiz', sessions: [{ t: Date.now(), subj: 'chem', topic: 'T3',
     results: { 'example-mc': { ok: true, marks: 1, tot: 1 } } }], archive: [], drafts: {}, reviewPlan: {}, cycle };
-  const app = boot('#/records', (url, options) => {
+  const app = boot('', (url, options) => {
     calls.push({ url, method: options.method });
     if (url.endsWith('/bank')) return new Promise(resolve => { finishBank = resolve; });
     if (options.method === 'GET') return new Promise(resolve => { finishSync = resolve; });
@@ -1347,11 +1558,11 @@ test('existing correct answers without a review plan do not break startup or OAu
   assert.match(app.node('#syncStatus').textContent, /已上傳至雲端/);
 });
 
-test('fresh visits, restored records and session links all start on the home page', () => {
+test('fresh visits open home while valid record and exercise links survive refresh', () => {
   for (const hash of ['', '#/records', '#/session/chem/T3']) {
     const app = boot(hash);
-    assert.equal(app.location.hash, '#/');
-    assert.match(app.node('#app').innerHTML, /Kyle 嘅錯題本/);
+    assert.equal(app.location.hash, hash || '#/');
+    assert.match(app.node('#app').innerHTML, hash.includes('/records') ? /做題記錄/ : hash.includes('/session') ? /示例課題/ : /Kyle 嘅錯題本/);
     app.location.hash = '#/records?test=1';
     app.events.hashchange();
     assert.match(app.node('#app').innerHTML, /做題記錄/);

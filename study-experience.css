@@ -1,0 +1,68 @@
+/* Learning controls inherit the site's existing artwork, palette and frame shapes. */
+.home-quick-links,.rp-actions,.saved-review-links{display:flex;flex-wrap:wrap;gap:10px}
+.home-quick-links{margin-top:18px}.home-resume{margin-top:16px}
+.saved-review-links{justify-content:center;margin:20px 0}
+.question-jump{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
+.question-jump a{display:grid;place-items:center;min-width:40px;min-height:40px;padding:5px 10px;border:1px solid var(--line);color:var(--ink);background:var(--card);border-radius:var(--radius);font-weight:700;text-decoration:none}
+.question-jump a.is-answered{background:var(--accent);color:var(--accent-ink)}
+.sq{scroll-margin-top:24px}
+.q-options [data-option-letter]{cursor:pointer;padding:12px 16px;border:1px solid var(--line);margin-block:8px;border-radius:var(--radius);min-height:44px;transition:background .15s}
+.q-options [data-option-letter][aria-pressed=true]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.q-options [data-option-letter]:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.submit-bar{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;align-items:center}
+html[data-appearance=full] body[data-view=session] .session{max-width:1160px}
+html[data-appearance=full] body[data-view=session] .submit-bar{width:auto;position:sticky;bottom:14px;z-index:20;padding:10px;backdrop-filter:blur(12px)}
+html[data-appearance=full] body[data-view=session] .q-stem{max-width:82ch}
+.paper-review-panel{min-width:0;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:var(--radius);padding:14px;position:sticky;top:calc(var(--paper-toolbar-height) + 16px);max-height:calc(100dvh - var(--paper-toolbar-height) - 60px);overflow:auto}
+.paper-review-dock>summary{cursor:pointer;font-weight:800;min-height:44px;display:flex;align-items:center}
+.paper-review-body{display:grid;gap:14px;padding-top:8px}.paper-review-body h2{font-size:20px;margin:0}
+.paper-review-body label{display:grid;gap:8px}.paper-review-body label.paper-pending{display:flex;gap:8px;align-items:center}
+.paper-review-body select{width:100%;max-width:100%;padding:10px;background:var(--card);color:var(--ink);border:1px solid var(--line);font:inherit;border-radius:var(--radius)}
+.paper-question-link{line-height:1.7;color:var(--accent)}
+.paper-quick-actions{display:none}
+@media(min-width:1200px){
+ .paper-workspace{grid-template-columns:150px minmax(0,1fr) 270px;gap:18px}
+ .paper-workspace.is-thumbs-hidden{grid-template-columns:minmax(0,1fr) 270px}
+}
+@media(min-width:700px) and (max-width:1199px){
+ .paper-review-panel{grid-column:1/-1;grid-row:1;position:static;max-height:none}
+}
+.paper-zoom{margin:auto;width:min(96vw,1500px);max-width:none;height:94dvh;max-height:96dvh;padding:16px;background:var(--card);color:var(--ink);border:1px solid var(--accent);border-radius:var(--radius);overflow:hidden}
+.paper-zoom::backdrop{background:#050a19d9}
+.paper-zoom-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;min-height:80px}
+.paper-zoom-head h2{font-size:18px;margin:0}.paper-zoom-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.paper-zoom-viewport{height:calc(100% - 100px);overflow:auto;overscroll-behavior:contain;touch-action:pan-x pan-y;background:#dce1e8;cursor:grab}
+.paper-zoom-viewport.is-dragging{cursor:grabbing}
+.paper-zoom-image{display:block;max-width:none!important;height:auto;user-select:none;-webkit-user-drag:none}
+html[data-appearance=full][data-theme=day] :is(.paper-review-panel,.question-jump a){border-radius:0}
+html[data-theme=night] .paper-zoom{border-radius:16px}
+@media(max-width:860px){
+ html[data-appearance=full] body[data-view=home] .home-stage .hero{order:0;padding:10px 0 18px;align-self:stretch;max-width:none}
+ html[data-appearance=full] body[data-view=home] .home-stage .tile-grid{order:1}
+ html[data-appearance=full] body[data-view=home] .home-stage .hero-title{margin:8px 0 18px}
+ html[data-appearance=full] body[data-view=home] .hero-en{font-size:54px}
+ html[data-appearance=full] body[data-view=home] .preview-due strong{font-size:60px}
+ html[data-appearance=full] body[data-view=home] .home-info{margin-top:16px}
+ .home-quick-links .btn{flex:1 1 90px;min-height:44px;padding:8px}
+ .today-controls{flex-wrap:wrap}.today-controls label{min-width:110px;flex:1}
+ .today-controls select{width:100%}
+ .inventory-layout{display:flex;flex-direction:column}.inventory-topics{order:0;width:100%}.inventory-years{order:1;width:100%}
+ .records-page{display:flex;flex-direction:column}.records-page>*{order:3}.records-page>.page-head{order:0}.records-page>.stat-cards{order:1}.records-page>.cycle-report{order:2}
+ html[data-appearance=full] body[data-view=session] .page-head{display:block}
+ html[data-appearance=full] body[data-view=session] .head-actions{margin-top:12px;display:flex;flex-wrap:wrap}
+ html[data-appearance=full] body[data-view=session] .page-head>div:first-child{padding-right:12px}
+ html[data-appearance=full] body[data-view=session] .submit-bar{bottom:10px;gap:6px;padding:7px}
+ html[data-appearance=full] body[data-view=session] .submit-bar .btn{padding:8px 10px;min-height:44px;font-size:13px;flex:1}
+ .paper-zoom{height:95dvh;width:98vw;padding:10px}.paper-zoom-head{gap:7px;min-height:110px}.paper-zoom-viewport{height:calc(100% - 125px)}
+}
+@media(max-width:699px){
+ .paper-review-panel{position:static;margin-bottom:12px;max-height:none}
+ .paper-workspace{display:flex;flex-direction:column}.paper-review-panel{order:-1;width:100%}.paper-stream{width:100%}
+ html[data-appearance=full] body[data-library=papers] .compact-nav{display:none}
+ html[data-appearance=full] body[data-library=papers] .shell-header{display:none}
+ .paper-review-body{max-height:55dvh;overflow:auto}
+ .paper-quick-actions:not([hidden]){display:flex;position:fixed;z-index:35;bottom:calc(var(--tabbar-offset,64px) + 8px);left:16px;right:16px;gap:8px;justify-content:center;padding:8px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+ .paper-quick-actions .btn{flex:1;min-width:0;font-size:12px;padding:8px;min-height:44px}
+ .paper-reading-page{padding-bottom:72px}
+}
+@media(prefers-reduced-motion:reduce){.q-options [data-option-letter]{transition:none}}

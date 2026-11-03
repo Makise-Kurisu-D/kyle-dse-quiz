@@ -9,7 +9,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'grading-model-allowlist-20261026';
+const SERVICE_VERSION = 'study-continuity-20261102';
 const refreshes = new Map();
 const bankReads = new Map();
 const metadataReads = new Map();
@@ -302,8 +302,9 @@ export function mergeBackup(current, incoming) {
     app: 'kyle-dse-quiz', version: 1, exportedAt: new Date().toISOString(),
     sessions: mergeSessions(current.sessions, incoming.sessions),
     archive: mergeSessions(current.archive, incoming.archive),
-    drafts: mergeDrafts(Number(current.cycle || 0) === cycle ? current.drafts : {},
-      Number(incoming.cycle || 0) === cycle ? incoming.drafts : {}),
+    // A new reporting cycle must not discard unfinished work on another device.
+    // Explicit completion/deletion remains governed by each draft's tombstone.
+    drafts: mergeDrafts(current.drafts, incoming.drafts),
     reviewPlan: plans,
     aiReviews: { ...(current.aiReviews || {}), ...(incoming.aiReviews || {}) },
     cycle: cycle ? String(cycle) : null,

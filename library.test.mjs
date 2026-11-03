@@ -155,3 +155,152 @@ test('attempt snapshots preserve submitted text, selections and source versions 
   assert.equal(snapshot.nextReviewAt,456);assert.equal(snapshot.rubricVersion,'manual-v1');
   assert.doesNotMatch(JSON.stringify(snapshot),/PRIVATE_QUESTION|PRIVATE_REFERENCE/);
 });
+
+test('targeted practice keeps explicit IDs, removes duplicates and bounds a selection without broadening it',()=>{
+  const back='#/library/books/chem/T1';
+  const href=library.drillHref('chem',['q2','q1','q2',''],back),params=new URLSearchParams(href.split('?')[1]);
+  assert.equal(href.split('?')[0],'#/drill/chem');
+  assert.equal(params.get('ids'),'q2,q1');assert.equal(params.get('back'),back);
+  assert.equal(library.drillHref('all',[],back),'');
+  assert.equal(new URLSearchParams(library.drillHref('all',Array.from({length:120},(_,i)=>'q'+i),back).split('?')[1]).get('ids').split(',').length,100);
+  assert.doesNotMatch(library.drillHref('chem',['q1'],'https://other.invalid/'),/other.invalid/);
+});
+
+test('recall cards retain verified source words, deduplicate matching sources and never invent missing concepts',()=>{
+  const items=[{id:'q1',stem:'合成題一',correct:'已核實正解 <script>',points:'只有符合條件才適用。',checks:['保留這個要點','✗這是警告']},
+    {id:'q2',stem:'合成題二',correct:'已核實正解 <script>',points:'只有符合條件才適用。',checks:['保留這個要點','✗這是警告']},
+    {id:'missing',stem:'沒有核實答案',deduct:'不要當作正解',correctOpt:'B'}];
+  const before=JSON.stringify(items),cards=library.conceptCards(items);
+  assert.equal(cards.length,1);assert.deepEqual(Array.from(cards[0].sources,s=>s.id),['q1','q2']);
+  assert.equal(cards[0].prompt,'合成題一');assert.equal(cards[0].excerpts[0].value,'已核實正解 <script>');
+  assert.equal(cards[0].excerpts[1].value,'只有符合條件才適用。');
+  assert.equal(cards[0].excerpts[2].value,'保留這個要點');assert.equal(JSON.stringify(items),before);
+});
+
+test('answer comparison uses only submitted snapshots, labels paper/legacy records and preserves text safely for rendering',()=>{
+  const item={id:'compare',kind:'sub',marks:3,stem:'合成題'},first=exercise(1,{compare:{...wrong}}),second=exercise(2,{compare:{...right}});
+  first.results.compare.attempt=library.attemptSnapshot(item,'第一份原答',[],first.results.compare,1);
+  second.results.compare.attempt=library.attemptSnapshot(item,'<script>第二份原答\n第二行',[],second.results.compare,2);
+  let rows=library.submittedAnswers(item,[first,second,second]);
+  assert.equal(rows.length,2);assert.equal(rows[0].answer,'<script>第二份原答\n第二行');assert.equal(rows[1].answer,'第一份原答');
+  const paper=exercise(3,{compare:{...right}});paper.results.compare.attempt=library.attemptSnapshot(item,'紙上作答',[],paper.results.compare,3,{onPaper:true});
+  rows=library.submittedAnswers(item,[first,paper]);assert.equal(rows[0].onPaper,true);assert.equal(rows[0].answer,null);
+  const legacy=exercise(4,{compare:{...right}});rows=library.submittedAnswers(item,[first,legacy]);assert.equal(rows[0].answer,null);
+  const changed=exercise(5,{compare:{...right,attempt:{...second.results.compare.attempt,questionId:'different',submittedAt:5}}});
+  assert.equal(library.submittedAnswers(item,[changed])[0].answer,null,'a mismatched snapshot is not an answer for this question');
+});
+
+function reviewFixture(sharedStorage=new Map()) {
+  const frames=[],nodes=new Map(),reading=[],timers=[];
+  const later=fn=>{timers.push(fn);return fn;},cancel=fn=>{const index=timers.indexOf(fn);if(index>=0)timers.splice(index,1);};
+  const pane={scrollTop:0,getBoundingClientRect:()=>({top:80})};
+  const makeNode=id=>({id,innerHTML:'',textContent:'',value:'',hidden:false,href:'',events:{},
+    addEventListener(name,fn){this.events[name]=fn;},removeEventListener(){},
+    querySelectorAll(){return [];},getAttribute(name){return name==='data-reading-id'?id:null;},
+    hasAttribute(name){return name==='data-reading-id';},getBoundingClientRect(){return {top:160-pane.scrollTop,bottom:760-pane.scrollTop,height:600};}});
+  const root={innerHTML:'',events:{},querySelector(selector){
+    if(selector==='.ml-question')return reading[0] || null;
+    if(!nodes.has(selector))nodes.set(selector,makeNode(selector));return nodes.get(selector);
+  },querySelectorAll(selector){return selector==='[data-reading-id]'?reading:[];},addEventListener(name,fn){this.events[name]=fn;},removeEventListener(name,fn){if(this.events[name]===fn)delete this.events[name];}};
+  const window={requestAnimationFrame:fn=>frames.push(fn),location:{hash:'#/library/books/chem/T1'},
+    localStorage:{getItem:key=>sharedStorage.get(key) || null,setItem:(key,value)=>sharedStorage.set(key,value)},
+    setTimeout:later,clearTimeout:cancel};
+  const sandbox={Date,window,setTimeout:later,clearTimeout:cancel};vm.createContext(sandbox);
+  vm.runInContext(readFileSync(new URL('./subject-config.js',import.meta.url),'utf8'),sandbox);
+  vm.runInContext(readFileSync(new URL('./library.js',import.meta.url),'utf8'),sandbox);
+  const items=[{id:'q-wrong',kind:'mc',year:'2022',topic:'T1',stem:'合成題',correct:'正解原文',options:['甲','乙'],correctOpt:'A',qref:'Q1',paper:'卷一'},
+    {id:'q-right',kind:'sub',year:'2022',topic:'T1',stem:'第二題',correct:'另一正解',qref:'Q2',paper:'卷一'}];
+  const history=[exercise(1,{'q-wrong':{...wrong},'q-right':{...right}})];
+  const api={root,scrollRoot:pane,userId:'kyle',history,data:{subjects:{chem:{topics:[{code:'T1',name:'合成課題'}],items}}},cycleStart:0,normalize:String,formatDate:String,hydrate(){}};
+  return {library:window.DSELibrary,api,root,nodes,reading,pane,frames,timers,makeNode,storage:sharedStorage,window};
+}
+
+test('topic filters and cross-subject search build a practice link for exactly the matching questions',()=>{
+  const f=reviewFixture(),before=JSON.stringify(f.api.history);
+  f.library.render(['chem','T1'],f.api);
+  const status=f.root.querySelector('#mlStatus');status.value='wrong';status.events.change();
+  const selected=new URLSearchParams(f.root.querySelector('#mlFilteredPractice').href.split('?')[1]);
+  assert.equal(selected.get('ids'),'q-wrong');assert.equal(selected.get('back'),'#/library/books/chem/T1');
+  assert.equal(f.root.querySelector('#mlFilteredPractice').textContent,'練習篩出的 1 題');
+  assert.match(f.root.querySelector('#mlQuestions').innerHTML,/data-reading-id="answer-q-wrong"><summary>先回憶/);
+  assert.doesNotMatch(f.root.querySelector('#mlQuestions').innerHTML,/<details class="ml-reveal"[^>]*\bopen\b/);
+  assert.match(f.root.querySelector('#mlQuestions').innerHTML,/#\/drill\/chem\?ids=q-wrong&amp;back=/);
+  f.library.remember();f.library.render(['search'],f.api);
+  const kind=f.root.querySelector('#globalKind');kind.value='mc';kind.events.change();
+  const globalLink=f.root.querySelector('#globalPractice').href;
+  assert.match(globalLink,/#\/drill\/all\?/);assert.equal(new URLSearchParams(globalLink.split('?')[1]).get('ids'),'q-wrong');
+  assert.equal(JSON.stringify(f.api.history),before,'reading and filtering do not write attempt evidence');
+});
+
+test('account reading state survives a reload with filters, expanded answer cards and an anchor while another account starts clean',()=>{
+  const store=new Map(),one=reviewFixture(store);
+  one.library.render(['chem','T1'],one.api);
+  const status=one.root.querySelector('#mlStatus');status.value='wrong';status.events.change();
+  const question=one.makeNode('question-q-wrong'),answer=one.makeNode('answer-q-wrong');question.open=true;answer.open=true;
+  one.reading.push(question,answer);one.pane.scrollTop=240;one.library.remember();
+  const snapshot=JSON.parse(store.get('dse_library_view_v1:kyle'));
+  assert.equal(snapshot.filters['chem/T1'].status,'wrong');assert.equal(snapshot.positions['chem/T1'].open['answer-q-wrong'],true);
+  assert.equal(snapshot.positions['chem/T1'].anchor.id,'answer-q-wrong');
+  assert.doesNotMatch(store.get('dse_library_view_v1:kyle'),/正解原文|另一正解|學生原答/,'view storage contains IDs and positions, not copied private answers');
+  const reload=reviewFixture(store),restoredQuestion=reload.makeNode('question-q-wrong'),restoredAnswer=reload.makeNode('answer-q-wrong');
+  reload.reading.push(restoredQuestion,restoredAnswer);reload.library.render(['chem','T1'],reload.api);reload.frames.forEach(fn=>fn());
+  assert.equal(reload.root.querySelector('#mlStatus').value,'wrong');assert.equal(restoredAnswer.open,true);assert.equal(reload.pane.scrollTop,240);
+  reload.library.reset();reload.reading.length=0;reload.pane.scrollTop=0;reload.library.render(['chem','T1'],{...reload.api,userId:'yeelam'});
+  assert.equal(reload.root.querySelector('#mlStatus').value,'');assert.equal(reload.pane.scrollTop,0);
+  const other=JSON.parse(store.get('dse_library_view_v1:yeelam') || 'null');
+  assert.equal(other && other.filters['chem/T1'] ? other.filters['chem/T1'].status : '', '');
+  assert.equal(other && other.positions['chem/T1'] ? Object.keys(other.positions['chem/T1'].open).length : 0,0);
+});
+
+test('reading remains usable when local storage is blocked or malformed and concept reveal stays closed',()=>{
+  const f=reviewFixture();f.window.localStorage={getItem(){throw new Error('blocked');},setItem(){throw new Error('blocked');}};
+  assert.doesNotThrow(()=>f.library.render(['concepts','chem','T1'],f.api));
+  assert.match(f.root.innerHTML,/先看題目，用自己的話回憶/);assert.match(f.root.innerHTML,/正解原文/);
+  assert.doesNotMatch(f.root.innerHTML,/<details class="ml-recall"[^>]*\bopen\b/);
+  assert.doesNotThrow(()=>f.library.remember());
+  f.library.reset();f.window.localStorage={getItem:()=>'{broken',setItem(){}};
+  assert.doesNotThrow(()=>f.library.render(['concepts'],f.api));assert.match(f.root.innerHTML,/概念回顧/);
+});
+
+test('a delayed search from the previous account cannot repaint the next account on the same topic route',()=>{
+  const f=reviewFixture();f.library.render(['chem','T1'],f.api);
+  const search=f.root.querySelector('#mlSearch');search.value='old account query';search.events.input();
+  const pending=f.timers.slice();f.library.reset();
+  const item={...f.api.data.subjects.chem.items[0],id:'new-account-only',stem:'新帳號題目'};
+  f.library.render(['chem','T1'],{...f.api,userId:'yeelam',history:[],data:{subjects:{chem:{topics:[{code:'T1',name:'合成課題'}],items:[item]}}}});
+  const before=f.root.querySelector('#mlQuestions').innerHTML;pending.forEach(fn=>fn());
+  assert.equal(f.root.querySelector('#mlQuestions').innerHTML,before);assert.match(before,/new-account-only/);
+});
+
+test('a paper-linked question and its single-question practice both return to the validated paper location',()=>{
+  const f=reviewFixture(),back='#/library/papers/chem/2022';
+  f.window.location.hash='#/library/books/question/chem/q-wrong?back='+encodeURIComponent(back);
+  f.library.render(['question','chem','q-wrong'],f.api);
+  assert.match(f.root.innerHTML,/href="#\/library\/papers\/chem\/2022">← 原來的複習位置/);
+  const drill=f.root.innerHTML.match(/class="btn btn-primary ml-redo-one" href="([^"]+)"/)[1].replaceAll('&amp;','&');
+  assert.equal(new URLSearchParams(drill.split('?')[1]).get('back'),back);
+  assert.equal(new URLSearchParams(drill.split('?')[1]).get('ids'),'q-wrong');
+  for(const unsafe of ['https://other.invalid/','javascript:alert(1)','#//other.invalid/','#/library/books?sync=private','#/library/papers/chem/2022\n']) {
+    f.window.location.hash='#/library/books/question/chem/q-wrong?back='+encodeURIComponent(unsafe);
+    f.library.render(['question','chem','q-wrong'],f.api);
+    assert.match(f.root.innerHTML,/href="#\/library\/books\/search">← 搜尋結果/);
+    assert.doesNotMatch(f.root.innerHTML,/原來的複習位置/);
+  }
+});
+
+test('personal reminders remain local, escaped and account-specific without changing submitted answer evidence',()=>{
+  const f=reviewFixture(),before=JSON.stringify(f.api.history),note='先檢查單位 <script>\n再核對對象';
+  f.library.render(['question','chem','q-wrong'],f.api);
+  const status={textContent:''},target={value:note,getAttribute:name=>name==='data-note-id'?'q-wrong':null,closest:()=>({querySelector:()=>status})};
+  f.root.events.input({target});
+  assert.equal(f.storage.get('dse_library_note_v1:kyle:q-wrong'),note);assert.equal(status.textContent,'已保存在此裝置。');
+  f.library.remember();f.library.render(['question','chem','q-wrong'],f.api);
+  assert.match(f.root.innerHTML,/先檢查單位 &lt;script&gt;\n再核對對象/);assert.match(f.root.innerHTML,/僅本機保存/);
+  assert.equal(JSON.stringify(f.api.history),before);
+  f.library.reset();f.library.render(['question','chem','q-wrong'],{...f.api,userId:'yeelam'});
+  assert.doesNotMatch(f.root.innerHTML,/先檢查單位/);
+  f.root.events.input({target:{...target,value:'另一個帳號的提醒'}});
+  assert.equal(f.storage.get('dse_library_note_v1:yeelam:q-wrong'),'另一個帳號的提醒');assert.equal(f.storage.get('dse_library_note_v1:kyle:q-wrong'),note);
+  f.window.localStorage={getItem:()=>'',setItem(){throw new Error('full');}};
+  f.root.events.input({target});assert.match(status.textContent,/未能保存/);
+});

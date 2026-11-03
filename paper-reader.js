@@ -3,15 +3,40 @@
   // Page shells stay in the document; only nearby full-size images stay decoded.
   window.DSEPaperReader = function (options) {
     var root = options.root, scroll = options.scrollRoot, thumbs = options.thumbs;
-    var manifest = options.manifest, current = options.page || 1, stopped = false;
+    var manifest = options.manifest, initial = options.initialPosition || {}, stopped = false;
+    var current = Number.isInteger(initial.page) ? initial.page : (options.page || 1);
+    current = Math.max(1, Math.min(manifest.pages, current));
     var rows = [], queue = [], active = 0, frame = null, atlasUrl = null, warmTimer;
     var atlas = manifest.thumbnails, sections = manifest.sections || [], resizeObserver;
-    var lastWidth = root.clientWidth, lastHeight = root.scrollHeight, anchorFraction = 0;
+    var lastWidth = root.clientWidth, lastHeight = root.scrollHeight;
+    var anchorFraction = Number.isFinite(initial.fraction) ? Math.max(0, Math.min(0.99, initial.fraction)) : 0;
     var mistakes = (manifest.mistakes || []).filter(function (m) {
       return Number.isInteger(m.page) && m.page > 0 && m.page <= manifest.pages &&
         Number.isFinite(m.x) && m.x >= 0 && m.x < 1 && Number.isFinite(m.y) && m.y >= 0 && m.y < 1;
     }).sort(function (a, b) { return a.page - b.page || a.y - b.y; });
-    var lastJump = null, marker = null;
+    var lastJump = null, marker = null, activeMistake = null, lastPosition = '';
+    var zoom = null, zoomUrl = null, zoomGeneration = 0;
+    if (typeof initial.mistakeLabel === 'string') activeMistake = mistakes.filter(function (m) {
+      return m.page === current && m.label === initial.mistakeLabel;
+    })[0] || null;
+    function readingTop() {
+      return Math.max(scroll.getBoundingClientRect().top, options.toolbar.getBoundingClientRect().bottom) + 24;
+    }
+    function getPosition() {
+      return { page: current, fraction: anchorFraction,
+        mistakeLabel: activeMistake && activeMistake.page === current ? activeMistake.label : undefined };
+    }
+    function publishPosition() {
+      var position = getPosition(), signature = JSON.stringify(position);
+      if (!stopped && options.onPosition && signature !== lastPosition) {
+        lastPosition = signature; options.onPosition(position);
+      }
+    }
+    function restoreAnchor() {
+      if (!rows[current - 1] || !rows[current - 1].sheet.getBoundingClientRect) return;
+      var box = rows[current - 1].sheet.getBoundingClientRect();
+      scroll.scrollTop += box.top + anchorFraction * box.height - readingTop();
+    }
     function measureToolbar() {
       if (options.toolbar.getBoundingClientRect) options.toolbar.parentElement.style.setProperty('--paper-toolbar-height', options.toolbar.getBoundingClientRect().height + 'px');
     }
@@ -41,6 +66,7 @@
         preview: thumbs.querySelector('#paperPreview-' + n) };
       (function (r) {
         r.retry.addEventListener('click', function () { r.state = 'idle'; ensure(r.page, true); });
+        r.image.addEventListener('dblclick', function () { openZoom(r.page); });
         r.thumb.addEventListener('click', function () { go(r.page); if (options.onNavigate) options.onNavigate(); });
         r.thumb.addEventListener('keydown', function (event) {
           var target = event.key === 'ArrowDown' ? r.page + 1 : event.key === 'ArrowUp' ? r.page - 1 :
@@ -121,8 +147,7 @@
       if (lastWidth && (root.clientWidth !== lastWidth || (lastHeight && root.scrollHeight !== lastHeight))) {
         resize(); return;
       }
-      var area = scroll.getBoundingClientRect(), toolbar = options.toolbar.getBoundingClientRect();
-      var top = Math.max(area.top, toolbar.bottom) + 24;
+      var top = readingTop();
       var next = current;
       for (var i = 0; i < rows.length; i++) {
         var box = rows[i].sheet.getBoundingClientRect();
@@ -132,8 +157,9 @@
       if (scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2) next = manifest.pages;
       if (next !== current) { current = next; notify(); }
       var currentBox = rows[current - 1].sheet.getBoundingClientRect();
-      anchorFraction = Math.max(0, Math.min(0.99, (top - currentBox.top) / currentBox.height));
-      nearby();
+      if (currentBox.height > 0) anchorFraction = Math.max(0, Math.min(0.99, (top - currentBox.top) / currentBox.height));
+      if (activeMistake && activeMistake.page !== current) activeMistake = null;
+      nearby(); publishPosition();
     }
     function schedule() {
       if (stopped || frame !== null) return;
@@ -141,7 +167,7 @@
     }
     function go(page, position) {
       if (stopped || !Number.isInteger(page) || page < 1 || page > manifest.pages) return;
-      clearTimeout(warmTimer); lastJump = null;
+      clearTimeout(warmTimer); lastJump = null; activeMistake = null;
       if (marker) { marker.remove(); marker = null; }
       current = page; anchorFraction = 0; notify();
       if (rows[page - 1].sheet.getBoundingClientRect) {
@@ -150,6 +176,8 @@
         var box = position ? body.getBoundingClientRect() : rows[page - 1].sheet.getBoundingClientRect();
         var delta = box.top + (position ? position.y * box.height : 0) - targetTop;
         scroll.scrollTop += delta;
+        var currentBox = rows[page - 1].sheet.getBoundingClientRect();
+        if (currentBox.height > 0) anchorFraction = Math.max(0, Math.min(0.99, (readingTop() - currentBox.top) / currentBox.height));
         if (position) {
           marker = document.createElement('span'); marker.className = 'paper-mistake-marker';
           marker.setAttribute('aria-hidden', 'true');
@@ -157,7 +185,25 @@
           body.appendChild(marker);
         }
       }
-      nearby();
+      nearby(); publishPosition();
+    }
+    function jumpMistake(index, wrapped) {
+      var mistake = mistakes[index];
+      if (stopped || !mistake) return null;
+      go(mistake.page, mistake);
+      activeMistake = mistake;
+      lastJump = { index: index, scrollTop: scroll.scrollTop };
+      var target = Object.assign({}, mistake, { index: index + 1, total: mistakes.length, wrapped: !!wrapped });
+      if (options.onMistake) options.onMistake(target);
+      publishPosition(); return target;
+    }
+    // Numeric indexes are one-based, matching the visible question counter.
+    function goMistake(target) {
+      var index = Number.isInteger(target) ? target - 1 : mistakes.findIndex(function (mistake) {
+        return target && (mistake === target || (mistake.page === target.page && mistake.label === target.label &&
+          (!target.question_id || mistake.question_id === target.question_id)));
+      });
+      return jumpMistake(index, false);
     }
     function nextMistake() {
       if (stopped || !mistakes.length) return null;
@@ -171,18 +217,133 @@
       });
       var wrapped = index < 0 || index >= mistakes.length;
       if (wrapped) index = 0;
-      var mistake = mistakes[index]; go(mistake.page, mistake);
-      lastJump = { index: index, scrollTop: scroll.scrollTop };
-      return { label: mistake.label, page: mistake.page, index: index + 1, total: mistakes.length, wrapped: wrapped };
+      return jumpMistake(index, wrapped);
+    }
+    function closeZoom(restoreFocus) {
+      zoomGeneration++;
+      if (!zoom) return;
+      var previous = zoom; zoom = null;
+      previous.image.onload = previous.image.onerror = null;
+      previous.image.removeAttribute('src');
+      if (zoomUrl) { URL.revokeObjectURL(zoomUrl); zoomUrl = null; }
+      if (previous.dialog.open && previous.dialog.close) previous.dialog.close();
+      previous.dialog.remove();
+      if (!stopped) {
+        current = previous.position.page; anchorFraction = previous.position.fraction;
+        restoreAnchor(); publishPosition();
+        if (restoreFocus !== false && previous.trigger && previous.trigger.isConnected !== false && previous.trigger.focus) {
+          previous.trigger.focus({ preventScroll: true });
+        }
+      }
+    }
+    function openZoom(page, target) {
+      page = Number.isInteger(page) ? page : current;
+      if (stopped || page < 1 || page > manifest.pages || typeof document === 'undefined' || !document.createElement || !document.body) return false;
+      closeZoom(false);
+      var trigger = document.activeElement, position = getPosition(), generation = ++zoomGeneration;
+      var dialog = document.createElement('dialog');
+      dialog.className = 'paper-zoom';
+      dialog.setAttribute('aria-label', label(page) + ' · 站內放大');
+      dialog.innerHTML = '<div class="paper-zoom-head"><strong>' + escape(label(page)) + '</strong>' +
+        '<div class="paper-zoom-controls"><button class="btn btn-ghost" type="button" data-zoom="out" aria-label="縮小本頁">−</button>' +
+        '<button class="btn btn-ghost" type="button" data-zoom="fit">適合寬度</button>' +
+        '<button class="btn btn-ghost" type="button" data-zoom="in" aria-label="放大本頁">＋</button>' +
+        '<button class="btn btn-primary" type="button" data-zoom="close">關閉放大</button></div></div>' +
+        '<p class="paper-zoom-status" role="status" aria-live="polite">正在載入清晰頁面…</p>' +
+        '<div class="paper-zoom-viewport" tabindex="0" aria-label="放大頁面，可左右及上下捲動">' +
+        '<img class="paper-zoom-image" alt="' + escape(options.title + ' ' + label(page)) + '" draggable="false" hidden>' +
+        '<button class="btn btn-ghost paper-zoom-retry" type="button" hidden>重新載入本頁</button></div>';
+      document.body.appendChild(dialog);
+      var viewport = dialog.querySelector('.paper-zoom-viewport'), image = dialog.querySelector('.paper-zoom-image');
+      var status = dialog.querySelector('.paper-zoom-status'), retry = dialog.querySelector('.paper-zoom-retry');
+      var scale = 2, focusPoint = target || (activeMistake && activeMistake.page === page ? activeMistake : null);
+      var state = zoom = { dialog: dialog, image: image, trigger: trigger, position: position };
+      function currentZoom() { return !stopped && zoom === state && generation === zoomGeneration; }
+      function applyScale(next, center) {
+        if (!currentZoom()) return;
+        var previousWidth = image.clientWidth || 1, previousHeight = image.clientHeight || 1;
+        var x = (viewport.scrollLeft + viewport.clientWidth / 2) / previousWidth;
+        var y = (viewport.scrollTop + viewport.clientHeight / 2) / previousHeight;
+        scale = Math.max(1, Math.min(4, next));
+        image.style.width = Math.max(1, (viewport.clientWidth || root.clientWidth || 360) - 24) * scale + 'px';
+        status.textContent = Math.round(scale * 100) + '% · 可拖動或捲動查看；關閉後返回原閱讀位置。';
+        dialog.querySelector('[data-zoom="out"]').disabled = scale <= 1;
+        dialog.querySelector('[data-zoom="in"]').disabled = scale >= 4;
+        if (center && focusPoint) { x = focusPoint.x; y = focusPoint.y; }
+        viewport.scrollLeft = Math.max(0, x * image.clientWidth - viewport.clientWidth / 2);
+        viewport.scrollTop = Math.max(0, y * image.clientHeight - viewport.clientHeight / 2);
+      }
+      state.resize = function () { if (!image.hidden) applyScale(scale); };
+      function failed() {
+        if (!currentZoom()) return;
+        image.hidden = true; retry.hidden = false;
+        status.textContent = '本頁暫時未能載入；可重試，或關閉後繼續閱讀。';
+      }
+      function assign(url) {
+        if (!currentZoom()) return;
+        image.onload = function () {
+          if (!currentZoom()) return;
+          image.hidden = false; retry.hidden = true; applyScale(scale, true);
+          viewport.focus({ preventScroll: true });
+        };
+        image.onerror = failed; image.src = url;
+      }
+      function loadZoom() {
+        if (!currentZoom()) return;
+        retry.hidden = true; status.textContent = '正在載入清晰頁面…';
+        var row = rows[page - 1];
+        if (row.url) { assign(row.url); return; }
+        Promise.resolve().then(function () { return options.loadPage(page); }).then(function (blob) {
+          if (!currentZoom()) return;
+          if (zoomUrl) URL.revokeObjectURL(zoomUrl);
+          zoomUrl = URL.createObjectURL(blob); assign(zoomUrl);
+        }).catch(failed);
+      }
+      dialog.querySelector('[data-zoom="close"]').addEventListener('click', function () { closeZoom(); });
+      dialog.querySelector('[data-zoom="out"]').addEventListener('click', function () { applyScale(scale - 0.5); });
+      dialog.querySelector('[data-zoom="in"]').addEventListener('click', function () { applyScale(scale + 0.5); });
+      dialog.querySelector('[data-zoom="fit"]').addEventListener('click', function () { applyScale(1); viewport.scrollLeft = 0; viewport.scrollTop = 0; });
+      retry.addEventListener('click', loadZoom);
+      dialog.addEventListener('cancel', function (event) { event.preventDefault(); closeZoom(); });
+      dialog.addEventListener('click', function (event) { if (event.target === dialog) closeZoom(); });
+      dialog.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') { event.preventDefault(); closeZoom(); }
+        if (!event.ctrlKey && !event.metaKey && (event.key === '+' || event.key === '=' || event.key === '-')) {
+          event.preventDefault(); applyScale(scale + (event.key === '-' ? -0.5 : 0.5));
+        }
+        if (event.key === 'Tab' && !dialog.showModal) {
+          var controls = Array.prototype.filter.call(dialog.querySelectorAll('button,[tabindex="0"]'), function (control) { return !control.hidden && !control.disabled; });
+          var first = controls[0], last = controls[controls.length - 1];
+          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+          if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+        }
+      });
+      var drag = null;
+      viewport.addEventListener('pointerdown', function (event) {
+        if (event.target !== image || event.pointerType === 'touch' || event.button !== 0 || scale <= 1) return;
+        drag = { x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop };
+        if (viewport.setPointerCapture) viewport.setPointerCapture(event.pointerId);
+        event.preventDefault();
+      });
+      viewport.addEventListener('pointermove', function (event) {
+        if (!drag) return;
+        viewport.scrollLeft = drag.left - event.clientX + drag.x;
+        viewport.scrollTop = drag.top - event.clientY + drag.y;
+      });
+      function endDrag() { drag = null; }
+      viewport.addEventListener('pointerup', endDrag); viewport.addEventListener('pointercancel', endDrag);
+      if (dialog.showModal) dialog.showModal();
+      else { dialog.setAttribute('open', ''); dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true'); }
+      dialog.querySelector('[data-zoom="close"]').focus({ preventScroll: true });
+      loadZoom(); return true;
     }
     scroll.addEventListener('scroll', schedule, { passive: true });
     function resize() {
       measureToolbar();
+      if (zoom && zoom.resize) zoom.resize();
       var width = root.clientWidth, height = root.scrollHeight;
       if (lastWidth && (width !== lastWidth || (lastHeight && height !== lastHeight)) && root.getBoundingClientRect) {
-        var box = rows[current - 1].sheet.getBoundingClientRect();
-        var top = scroll.getBoundingClientRect().top + options.toolbar.getBoundingClientRect().height + 24;
-        scroll.scrollTop += box.top + anchorFraction * box.height - top;
+        restoreAnchor();
       }
       lastWidth = width; lastHeight = height; schedule();
     }
@@ -190,7 +351,17 @@
     measureToolbar();
     if (window.ResizeObserver) { resizeObserver = new window.ResizeObserver(resize); resizeObserver.observe(options.toolbar); resizeObserver.observe(root); }
     notify(); ensure(current, true);
-    warmTimer = setTimeout(function () { if (!stopped) { if (current > 1) go(current); else nearby(); } }, 200);
+    if (Number.isInteger(initial.page)) restoreAnchor();
+    publishPosition();
+    if (activeMistake && options.onMistake) options.onMistake(Object.assign({}, activeMistake, {
+      index: mistakes.indexOf(activeMistake) + 1, total: mistakes.length, wrapped: false
+    }));
+    warmTimer = setTimeout(function () {
+      if (stopped) return;
+      if (Number.isInteger(initial.page)) { restoreAnchor(); nearby(); publishPosition(); }
+      else if (current > 1) go(current);
+      else nearby();
+    }, 200);
     if (atlas && options.loadThumbnails) {
       options.loadThumbnails().then(function (blob) {
         if (stopped) return;
@@ -204,7 +375,10 @@
         });
       }).catch(function () { if (!stopped && options.onThumbnailError) options.onThumbnailError(); });
     }
-    return { go: go, nextMistake: nextMistake, layoutChange: function (change) { change(); resize(); }, destroy: function () {
+    return { go: go, nextMistake: nextMistake, goMistake: goMistake, openZoom: openZoom, closeZoom: closeZoom,
+      getPosition: function () { if (!stopped && root.getBoundingClientRect) track(); return getPosition(); },
+      layoutChange: function (change) { change(); resize(); }, destroy: function () {
+      closeZoom(false);
       stopped = true; clearTimeout(warmTimer); queue = [];
       scroll.removeEventListener('scroll', schedule); window.removeEventListener('resize', resize);
       if (resizeObserver) resizeObserver.disconnect();

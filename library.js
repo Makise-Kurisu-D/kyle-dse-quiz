@@ -7,6 +7,7 @@
     { key: 'regressed', label: '回退' }
   ];
   var labels = {}, positions = {}, filters = {}, selectedYears = {}, topicGeneration = 0, activeKey = '', context;
+  var memoryUser = '', stopReading = null, readingTimer = null;
   var searchState = { query:'', subject:'', year:'', kind:'', status:'', tag:'', limit:20 };
   states.forEach(function (s) { labels[s.key] = s.label; });
   function esc(value) {
@@ -14,6 +15,114 @@
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
   function text(value) { return esc(value).replace(/\n/g, '<br>'); }
+  function plainObject(value) { return !!value && typeof value === 'object' && !Array.isArray(value); }
+  function blankSearch() { return { query:'', subject:'', year:'', kind:'', status:'', tag:'', limit:20 }; }
+  function boundedLimit(value, fallback) { return Number.isInteger(value) && value > 0 ? Math.min(value, 1000) : fallback; }
+  function storageKey(user) { return 'dse_library_view_v1:' + user; }
+  function saveReading() {
+    if (!memoryUser) return;
+    try { global.localStorage.setItem(storageKey(memoryUser), JSON.stringify({version:1, positions:positions, filters:filters, years:selectedYears, search:searchState})); } catch (_) {}
+  }
+  function chooseUser(user) {
+    user = typeof user === 'string' && /^[a-z0-9_-]{1,40}$/i.test(user) ? user : '';
+    if (memoryUser === user) return;
+    clearReading(); positions = {}; filters = {}; selectedYears = {}; searchState = blankSearch(); memoryUser = user;
+    if (!user) return;
+    try {
+      var saved = JSON.parse(global.localStorage.getItem(storageKey(user)) || 'null');
+      if (!saved || saved.version !== 1) return;
+      if (plainObject(saved.positions)) Object.keys(saved.positions).slice(-200).forEach(function (key) {
+        var row = saved.positions[key];
+        if (!plainObject(row) || !Number.isFinite(row.scroll) || row.scroll < 0) return;
+        positions[key] = {scroll:Math.min(row.scroll, 1e7), open:plainObject(row.open) ? row.open : {},
+          anchor:row.anchor && typeof row.anchor.id === 'string' && Number.isFinite(row.anchor.offset) ? row.anchor : null};
+      });
+      if (plainObject(saved.filters)) Object.keys(saved.filters).slice(-200).forEach(function (key) {
+        var source = saved.filters[key]; if (!plainObject(source)) return;
+        var clean = {}; ['query','status','kind','year','sort'].forEach(function (name) { if (typeof source[name] === 'string') clean[name] = source[name].slice(0,200); });
+        clean.limit = boundedLimit(source.limit, 12); filters[key] = clean;
+      });
+      if (plainObject(saved.years)) Object.keys(saved.years).slice(-20).forEach(function (code) { if (/^(all|20\d{2})$/.test(saved.years[code])) selectedYears[code] = saved.years[code]; });
+      if (plainObject(saved.search)) {
+        Object.keys(searchState).forEach(function (name) { if (name !== 'limit' && typeof saved.search[name] === 'string') searchState[name] = saved.search[name].slice(0,200); });
+        searchState.limit = boundedLimit(saved.search.limit,20);
+      }
+    } catch (_) {}
+  }
+  function safeBack(value) {
+    return typeof value === 'string' && value.length <= 24000 && /^#\/(?:$|(?:practice|session|today|drill|random|library|records)(?:[/?]|$))/.test(value) &&
+      !/[\u0000-\u001f<>]/.test(value) && !/[?&](?:handoff|sync)=/.test(value) ? value : '';
+  }
+  function currentBack() { return safeBack(global.location && global.location.hash) || '#/library/books'; }
+  function questionBack() {
+    var hash = global.location && global.location.hash || '', found = '';
+    String(hash).split('?').slice(1).join('?').split('&').forEach(function (pair) {
+      var index = pair.indexOf('='); if (index < 0) return;
+      try { if (decodeURIComponent(pair.slice(0,index)) === 'back') found = decodeURIComponent(pair.slice(index+1).replace(/\+/g,' ')); } catch (_) {}
+    });
+    return safeBack(found);
+  }
+  function selectionIds(ids) {
+    return Array.from(new Set((ids || []).filter(function (id) { return typeof id === 'string' && id.length > 0 && id.length <= 200 && id.indexOf(',') < 0; }))).slice(0,100);
+  }
+  function drillHref(code, ids, back) {
+    var selected = selectionIds(ids);
+    if (!selected.length) return '';
+    back = safeBack(back) || currentBack();
+    return '#/drill/' + encodeURIComponent(code) + '?ids=' + encodeURIComponent(selected.join(',')) + '&back=' + encodeURIComponent(back);
+  }
+  function selectionLink(node, code, ids) {
+    var selected = selectionIds(ids); node.hidden = !selected.length;
+    node.href = drillHref(code, selected);
+    node.textContent = ids.length > selected.length ? '練習篩選前 ' + selected.length + ' 題（共 ' + ids.length + ' 題）' : '練習篩出的 ' + selected.length + ' 題';
+  }
+  function submittedAnswers(item, history) {
+    return independentHistory(history).filter(function (session) { return session.results[item.id]; }).slice(-2).reverse().map(function (session) {
+      var result = session.results[item.id], attempt = result.attempt;
+      var valid = attempt && attempt.version === 1 && attempt.questionId === item.id && attempt.submittedAt === session.t;
+      return { t:session.t, marks:result.marks, total:result.tot, correct:full(result),
+        answer:valid && !attempt.onPaper && typeof attempt.answer === 'string' ? attempt.answer : null,
+        onPaper:!!(valid && attempt.onPaper), assisted:!!(valid && attempt.assisted),
+        checked:valid && Array.isArray(attempt.checkedIndices) ? attempt.checkedIndices.slice() : [],
+        scoreMethod:valid ? attempt.scoreMethod : null };
+    });
+  }
+  function comparisonHtml(item) {
+    var rows = submittedAnswers(item, context.history);
+    return '<section class="ml-comparison" aria-label="歷次提交原答對照"><h3>原卷與重做對照</h3><p class="review-note">原卷答案見上方；以下只顯示已提交的原文，與原卷判分分開保存。</p>' +
+      (rows.length ? '<div class="ml-comparison-grid">' + rows.map(function (row, index) {
+        return '<article><h4>' + (index ? '上一次提交' : '最近提交') + '</h4><p class="ml-comparison-meta">' + esc(context.formatDate(row.t)) +
+          (Number.isFinite(row.marks) && Number.isFinite(row.total) ? ' · ' + row.marks + '/' + row.total : '') + (row.assisted ? ' · 曾使用輔助' : '') + '</p>' +
+          '<div class="ml-submitted-answer">' + (row.onPaper ? '紙上作答：未保存原答影像，無法顯示或比對原文。' : row.answer !== null && row.answer.trim() ? text(row.answer) : '這筆歷史記錄未保存提交原文，不補造答案。') + '</div>' +
+          (row.checked.length ? '<p class="review-note">當時勾選的核對項：' + esc(row.checked.map(function (n) { return n + 1; }).join('、')) + '。以該次題目版本為準。</p>' : '') + '</article>';
+      }).join('') + '</div>' : '<p class="review-note">尚無已提交的重做記錄。</p>') + '</section>';
+  }
+  function noteKey(id) { return 'dse_library_note_v1:' + memoryUser + ':' + encodeURIComponent(id); }
+  function personalNote(item) {
+    var value = '', available = !!memoryUser;
+    try { if (available) value = String(global.localStorage.getItem(noteKey(item.id)) || '').slice(0,1000); } catch (_) { available = false; }
+    var id = 'ml-note-' + fingerprint(item.id);
+    return '<details class="ml-note" data-reading-id="note-' + esc(item.id) + '"><summary>我的防錯提醒（選填）</summary><label for="' + id + '">寫一句下次要提醒自己的話</label>' +
+      '<textarea id="' + id + '" data-note-id="' + esc(item.id) + '" maxlength="1000" rows="3" placeholder="例如：讀完題目後再核對單位。"' + (available ? '' : ' disabled') + '>' + esc(value) + '</textarea>' +
+      '<p class="review-note">僅本機保存，不會當作已提交原答、得分或掌握證據。</p><p class="review-note" data-note-status role="status" aria-live="polite">' +
+      (available ? value ? '已保存在此裝置。' : '' : '此裝置暫時無法保存提醒。') + '</p></details>';
+  }
+  function conceptCards(items) {
+    var cards = [], known = new Map();
+    (items || []).forEach(function (item) {
+      var excerpts = [];
+      if (typeof item.correct === 'string' && item.correct.trim()) excerpts.push({label:'正解原文',value:item.correct});
+      if (typeof item.points === 'string' && item.points.trim()) excerpts.push({label:'得分說明原文',value:item.points});
+      var checks = (item.checks || []).filter(function (point) { return typeof point === 'string' && point.trim() && !/^\s*[✗×]/.test(point); });
+      if (checks.length) excerpts.push({label:'核對要點原文',value:checks.join('\n')});
+      if (!excerpts.length) return;
+      var key = excerpts.map(function (excerpt) { return excerpt.value.replace(/\s+/g,' ').trim(); }).join('\n');
+      if (known.has(key)) { known.get(key).sources.push(item); return; }
+      var row = {id:'concept-' + fingerprint(key),prompt:item.stemFull || item.stem || item.qref,excerpts:excerpts,sources:[item]};
+      known.set(key,row); cards.push(row);
+    });
+    return cards;
+  }
   // Publication year remains the storage key; mock set numbers are display metadata.
   function sourceInfo(year, detail, items) {
     detail = detail || {};
@@ -209,25 +318,95 @@
   function icon(code) { return global.DSESubjects.icon(code); }
   function header(title, sub, back, label) {
     return '<header class="page-head"><div><h1 class="page-title">' + title + '</h1><p class="page-sub">' + sub +
-      '</p></div><a class="btn btn-ghost" href="' + back + '">← ' + label + '</a></header>';
+      '</p></div><a class="btn btn-ghost" href="' + esc(back) + '">← ' + label + '</a></header>';
   }
-  function remember() {
-    if (activeKey) positions[activeKey] = context.scrollRoot ? context.scrollRoot.scrollTop : global.scrollY || 0;
-    activeKey = '';
-  }
-  function frame(key, html) {
-    activeKey = key;
-    context.root.innerHTML = '<section class="page ml-page' + (key === 'subjects' ? ' ml-subject-picker' : '') + '">' + html + '</section>';
-    if (positions[key]) (global.requestAnimationFrame || function (fn) { fn(); })(function () {
-      if (activeKey !== key) return;
-      if (context.scrollRoot) context.scrollRoot.scrollTop = positions[key];
-      else global.scrollTo(0, positions[key]);
+  function readingNodes() { return context && context.root.querySelectorAll ? Array.prototype.slice.call(context.root.querySelectorAll('[data-reading-id]')) : []; }
+  function captureReading() {
+    if (!activeKey || !context) return;
+    var pane = context.scrollRoot, nodes = readingNodes(), previous = positions[activeKey];
+    var row = {scroll:pane ? pane.scrollTop : global.scrollY || 0, open:previous && previous.open || {}, anchor:null};
+    var top = pane && pane.getBoundingClientRect ? pane.getBoundingClientRect().top : 0, anchor;
+    nodes.forEach(function (node) {
+      var id = node.getAttribute('data-reading-id'); row.open[id] = node.open === true;
+      if (!node.getBoundingClientRect) return;
+      var box = node.getBoundingClientRect();
+      if (box.height && box.top <= top + 24 && box.bottom > top + 24) anchor = {id:id, offset:box.top - top};
+      else if (!anchor && box.height && box.top > top) anchor = {id:id, offset:box.top - top};
     });
+    row.anchor = anchor || null; positions[activeKey] = row; saveReading();
+  }
+  function clearReading() {
+    if (readingTimer !== null && global.clearTimeout) global.clearTimeout(readingTimer);
+    readingTimer = null;
+    if (stopReading) stopReading();
+    stopReading = null;
+  }
+  function restoreReading(key) {
+    if (activeKey !== key || !context) return;
+    var row = positions[key], nodes = readingNodes(), api = context;
+    if (!row) return;
+    nodes.forEach(function (node) { var id = node.getAttribute('data-reading-id'); if (Object.prototype.hasOwnProperty.call(row.open || {},id)) node.open = row.open[id] === true; });
+    var pane = api.scrollRoot;
+    if (pane) pane.scrollTop = row.scroll;
+    else if (global.scrollTo) global.scrollTo(0,row.scroll);
+    var anchor = row.anchor && nodes.filter(function (node) { return node.getAttribute('data-reading-id') === row.anchor.id; })[0];
+    if (anchor && anchor.getBoundingClientRect && pane && pane.getBoundingClientRect) pane.scrollTop += anchor.getBoundingClientRect().top - pane.getBoundingClientRect().top - row.anchor.offset;
+    nodes.forEach(function (node) { if (node.open && api.hydrate) api.hydrate(node); });
+  }
+  function bindReading(key) {
+    clearReading();
+    var api = context, root = api.root, pane = api.scrollRoot || global;
+    function current() { return context === api && activeKey === key; }
+    function capture() {
+      if (!current()) return;
+      if (readingTimer !== null && global.clearTimeout) global.clearTimeout(readingTimer);
+      if (global.setTimeout) readingTimer = global.setTimeout(function () { readingTimer = null; if (current()) captureReading(); },150);
+      else captureReading();
+    }
+    function toggle(event) {
+      if (!current()) return;
+      var detail = event.target;
+      if (detail && detail.open && detail.hasAttribute && detail.hasAttribute('data-reading-id') && api.hydrate) {
+        Array.prototype.forEach.call(detail.querySelectorAll('[data-library-image]'),function (img) { img.setAttribute('data-bank-image',img.getAttribute('data-library-image')); img.removeAttribute('data-library-image'); });
+        api.hydrate(detail);
+      }
+      capture();
+    }
+    function leave() { if (current()) captureReading(); }
+    function noteInput(event) {
+      if (!current() || !memoryUser) return;
+      var node = event.target, id = node && node.getAttribute && node.getAttribute('data-note-id');
+      if (!id || id.length > 200) return;
+      var message;
+      try { global.localStorage.setItem(noteKey(id),String(node.value || '').slice(0,1000)); message = '已保存在此裝置。'; }
+      catch (_) { message = '此裝置未能保存，請先複製提醒文字。'; }
+      var section = node.closest && node.closest('.ml-note'), status = section && section.querySelector('[data-note-status]');
+      if (status) status.textContent = message;
+    }
+    if (root.addEventListener) root.addEventListener('toggle',toggle,true);
+    if (root.addEventListener) root.addEventListener('input',noteInput);
+    if (pane.addEventListener) pane.addEventListener('scroll',capture,{passive:true});
+    if (global.addEventListener) global.addEventListener('pagehide',leave);
+    stopReading = function () {
+      if (root.removeEventListener) root.removeEventListener('toggle',toggle,true);
+      if (root.removeEventListener) root.removeEventListener('input',noteInput);
+      if (pane.removeEventListener) pane.removeEventListener('scroll',capture);
+      if (global.removeEventListener) global.removeEventListener('pagehide',leave);
+    };
+  }
+  function remember() { captureReading(); clearReading(); activeKey = ''; }
+  function frame(key, html) {
+    clearReading(); activeKey = key;
+    var api = context;
+    context.root.innerHTML = '<section class="page ml-page' + (key === 'subjects' ? ' ml-subject-picker' : '') + '">' + html + '</section>';
+    bindReading(key);
+    if (positions[key]) (global.requestAnimationFrame || function (fn) { fn(); })(function () { if (context === api) restoreReading(key); });
   }
   function overview() {
     var subjects = context.data.subjects;
     frame('subjects', header('<span class="persona-icon persona-icon-library" aria-hidden="true"></span> 錯題庫', '從科目到課題，直接找到需要重溫的錯題。', '#/', '主頁') +
-      '<a class="btn btn-primary ml-global-entry" href="#/library/books/search">搜尋全科錯題 · 題號、知識點、答案與解析</a>' +
+      '<div class="ml-reading-actions"><a class="btn btn-primary ml-global-entry" href="#/library/books/search">搜尋全科錯題 · 題號、知識點、答案與解析</a>' +
+      '<a class="btn btn-ghost" href="#/library/books/concepts">概念回顧 · 先回憶再核對</a></div>' +
       '<div class="ml-subject-dock"><div class="ml-subjects">' + global.DSESubjects.libraryOrder(subjects).map(function (code) {
         var stats = summarize(subjects[code].items, context.index);
         var percent = stats.total ? Math.round(stats.mastered / stats.total * 100) : 0;
@@ -267,6 +446,7 @@
     var previous = order[(subjectIndex + order.length - 1) % order.length];
     var next = order[(subjectIndex + 1) % order.length];
     frame(code, header('錯題庫與歸納', '選年份，再選課題。原答案、錯因與正解依次展開。', '#/library/books', '科目') +
+      '<div class="ml-reading-actions"><a class="btn btn-ghost" href="#/library/books/concepts/' + code + '">回顧' + subjectName(code) + '概念</a></div>' +
       '<div class="inventory-switch" aria-label="學科切換"><a class="shoulder-link" href="#/library/books/' + previous + '" aria-label="上一個學科：' + subjectName(previous) + '">‹ LB</a>' +
       '<strong>' + subjectName(code) + '</strong><a class="shoulder-link" href="#/library/books/' + next + '" aria-label="下一個學科：' + subjectName(next) + '">RB ›</a></div>' +
       '<div class="inventory-layout"><section class="inventory-years" aria-label="年份與原卷成績"><h2>YEAR SELECT / 年份與狀態</h2>' +
@@ -335,9 +515,9 @@
       });
       // Keep the pressed year button mounted so keyboard focus is preserved.
       Array.prototype.forEach.call(root.querySelectorAll('[data-year]'), function (node) { node.setAttribute('aria-pressed', String(node === button)); });
-      draw();
+      draw(); saveReading();
     });
-    sort.addEventListener('change', function () { filters[code] = { sort: sort.value }; draw(); });
+    sort.addEventListener('change', function () { filters[code] = { sort: sort.value }; draw(); saveReading(); });
     drawYears(); draw();
     if (api.catalog) api.catalog().then(function (result) {
       if (activeKey !== code || context !== api || generation !== topicGeneration) return;
@@ -350,15 +530,15 @@
       if (activeKey === code && context === api && generation === topicGeneration) root.querySelector('#mlGradeStatus').textContent = '原卷成績暫未能讀取。可先查看錯題；重新進入此頁可重試。';
     });
   }
-  function card(item, year) {
+  function card(item, year, returnBack) {
     var row = context.index[item.id], state = row ? row.state : 'unseen';
     var own = item.kind === 'mc' ? text(item.option || '未作答') : (item.my || []).map(function (segment) {
       return '<span' + (segment[1] ? ' class="ml-answer-error"' : '') + '>' + text(segment[0]) + '</span>';
     }).join('<br>') || '未作答';
     var figures = Array.isArray(item.figures) ? item.figures : [];
-    return '<details class="ml-question" id="question-' + esc(item.id) + '"><summary><span class="ml-question-meta">' +
+    return '<details class="ml-question" id="question-' + esc(item.id) + '" data-reading-id="question-' + esc(item.id) + '"><summary><span class="ml-question-meta">' +
       esc(itemSource(item) + ' · ' + item.qref) + (Number.isFinite(item.lost) ? ' · 原卷失分 ' + item.lost : '') + '</span>' + badge(state) +
-      '<span class="ml-question-title">' + esc(item.stem) + '</span><span class="ml-question-expand">展開答案與錯因</span></summary>' +
+      '<span class="ml-question-title">' + esc(item.stem) + '</span><span class="ml-question-expand">查看完整題目 · 答案另行展開</span></summary>' +
       '<div class="ml-question-body"><div class="ml-stem"><h3>' + (item.stemFull ? '題目' : '題目要點') + '</h3><p>' + text(item.stemFull || item.stem) + '</p>' +
       (Array.isArray(item.options) ? '<ol class="ml-options" type="A">' + item.options.map(function (option) { return '<li>' + text(option) + '</li>'; }).join('') + '</ol>' : '') +
       (Array.isArray(item.tables) ? item.tables.map(function (table) {
@@ -370,7 +550,9 @@
         return /^images\/(chem|bio|math|m2|physics)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path) ? '<figure><img data-library-image="' + esc(f.path) +
           '" loading="lazy" decoding="async" alt="' + esc(f.alt || '原題圖表') + '"' +
           (f.width > 0 && f.height > 0 ? ' width="' + Number(f.width) + '" height="' + Number(f.height) + '"' : '') + '><figcaption>' + esc(f.alt) + '</figcaption></figure>' : '';
-      }).join('') + '</div><div class="ml-answer ml-answer-own"><h3>我的原答案</h3><p>' + own + '</p></div>' +
+      }).join('') + '</div><div class="ml-reading-actions"><a class="btn btn-primary ml-redo-one" href="' + esc(drillHref(context.code,[item.id],returnBack)) + '">' + (item.kind === 'mc' ? '獨立重做這道選擇題' : '獨立重做這一題') + '</a></div>' +
+      '<details class="ml-reveal" data-reading-id="answer-' + esc(item.id) + '"><summary>先回憶，再查看原答案、錯因與完整詳解</summary><div class="ml-reveal-body">' +
+      '<div class="ml-answer ml-answer-own"><h3>我的原答案</h3><p>' + own + '</p></div>' +
       '<div class="ml-answer ml-answer-deduct"><h3>扣分點與錯因</h3><p>' + text(item.deduct) + '</p></div>' +
       '<div class="ml-answer ml-answer-correct"><h3>正解與踩分點</h3>' +
         (item.correctOpt || item.correct ? '<p>' + text(item.correctOpt || item.correct) + '</p>' : '') +
@@ -379,59 +561,85 @@
       (row ? '<div class="ml-history"><h3>最近重做記錄</h3><p>與上方原卷答案分開記錄 · 連續全對 ' + row.streak + ' 次</p><ol>' +
         row.history.slice(-5).reverse().map(function (h) { return '<li>' + context.formatDate(h.t) + ' · ' +
           (h.correct ? '全對' : '未全對') + (h.tot ? ' · ' + esc(h.marks + '/' + h.tot) : '') + '</li>'; }).join('') + '</ol></div>' : '') +
-      (context.aiHtml ? context.aiHtml(item.id) : '') + '<a class="btn btn-primary" href="#/session/' + context.code + '/' + encodeURIComponent(item.topic) + (year ? '/' + encodeURIComponent(year) : '') + '">練習本課題</a></div></details>';
+      comparisonHtml(item) + (context.aiHtml ? context.aiHtml(item.id) : '') + '</div></details>' + personalNote(item) + '<div class="ml-reading-actions"><a class="btn btn-ghost" href="#/session/' + context.code + '/' + encodeURIComponent(item.topic) + (year ? '/' + encodeURIComponent(year) : '') + '">練習整個課題</a>' +
+      '<a class="btn btn-ghost" href="#/library/books/concepts/' + context.code + '/' + encodeURIComponent(item.topic) + '">概念回顧</a></div></div></details>';
   }
   function questions(code, topicCode) {
-    var subject = context.data.subjects[code], topic = subject.topics.filter(function (t) { return t.code === topicCode; })[0];
+    var api = context, subject = api.data.subjects[code], topic = subject.topics.filter(function (t) { return t.code === topicCode; })[0];
     if (!topic) return topicPage(code);
     var items = subject.items.filter(function (item) { return item.topic === topicCode; });
-    var key = code + '/' + topicCode, f = filters[key] || { query: '', status: '', kind: '', year: selectedYears[code] && selectedYears[code] !== 'all' ? selectedYears[code] : '' }, limit = 12;
+    var key = code + '/' + topicCode, f = Object.assign({ query:'', status:'', kind:'', year:selectedYears[code] && selectedYears[code] !== 'all' ? selectedYears[code] : '' },filters[key] || {}), limit = boundedLimit(f.limit,12);
     filters[key] = f; context.code = code;
     var years = sourceYears(items);
     frame(key, header(esc(topic.code + ' · ' + topic.name), '原答案、扣分點與正解放在一起，按需要展開閱讀。', '#/library/books/' + code, subjectName(code) + '課題') +
-      summary(code, items, topic.name) + '<div class="ml-filters"><label class="ml-search">搜尋<input id="mlSearch" type="search" placeholder="題號、題幹、錯因或答案" value="' + esc(f.query) + '"></label>' +
+      summary(code, items, topic.name) + conceptPanel(code,topicCode,items) + '<div class="ml-filters"><label class="ml-search">搜尋<input id="mlSearch" type="search" placeholder="題號、題幹、錯因或答案" value="' + esc(f.query) + '"></label>' +
       '<label>狀態<select id="mlStatus"><option value="">全部狀態</option>' + states.map(function (s) { return '<option value="' + s.key + '">' + s.label + '</option>'; }).join('') + '</select></label>' +
       '<label>題型<select id="mlKind"><option value="">全部題型</option><option value="mc">選擇題</option><option value="sub">主觀題</option></select></label>' +
       '<label>年份<select id="mlYear"><option value="">全部年份</option>' + years.map(function (y) { return '<option value="' + esc(y) + '">' + esc(sourceInfo(y, null, items).label) + '</option>'; }).join('') + '</select></label></div>' +
-      '<div class="ml-section-head"><p id="mlMatchCount" role="status" aria-live="polite"></p><a class="btn btn-primary" id="mlPracticeLink" href="#/session/' + code + '/' + encodeURIComponent(topicCode) + '">練習本課題</a></div>' +
+      '<div class="ml-section-head"><p id="mlMatchCount" role="status" aria-live="polite"></p><div class="ml-reading-actions"><a class="btn btn-primary" id="mlFilteredPractice" hidden>練習篩選結果</a><a class="btn btn-ghost" id="mlPracticeLink" href="#/session/' + code + '/' + encodeURIComponent(topicCode) + '">練習整個課題</a></div></div>' +
       '<div id="mlQuestions"></div><button class="btn btn-ghost" id="mlMore" hidden type="button">顯示更多</button>');
     var root = context.root, search = root.querySelector('#mlSearch'), timer;
     ['Status', 'Kind', 'Year'].forEach(function (name) {
       var element = root.querySelector('#ml' + name); element.value = f[name.toLowerCase()];
-      element.addEventListener('change', function () { f[name.toLowerCase()] = element.value; limit = 12; draw(); });
+      element.addEventListener('change', function () { f[name.toLowerCase()] = element.value; limit = 12; draw(); saveReading(); });
     });
     var normalized = items.map(function (item) {
       return { item: item, search: context.normalize([item.qref, item.stem, item.stemFull, item.deduct, item.correct, item.points,
         JSON.stringify(item.my || []), (item.options || []).join(' ')].join(' ')).toLowerCase() };
     });
     function draw() {
-      if (activeKey !== key) return;
+      if (activeKey !== key || context !== api) return;
+      if (root.querySelector('#mlQuestions').innerHTML) captureReading();
       root.querySelector('#mlPracticeLink').href = '#/session/' + code + '/' + encodeURIComponent(topicCode) + (f.year ? '/' + encodeURIComponent(f.year) : '');
       var query = context.normalize(f.query.trim()).toLowerCase();
       var matches = normalized.filter(function (row) {
         var it = row.item, state = context.index[it.id];
         return (!f.status || (state ? state.state : 'unseen') === f.status) && (!f.kind || it.kind === f.kind) &&
-          (!f.year || it.year === f.year) && (!query || row.search.indexOf(query) >= 0);
+          (!f.year || String(it.year) === f.year) && (!query || row.search.indexOf(query) >= 0);
       });
+      f.limit = limit; selectionLink(root.querySelector('#mlFilteredPractice'),code,matches.map(function (row) { return row.item.id; }));
       root.querySelector('#mlMatchCount').textContent = matches.length + ' / ' + items.length + ' 張錯題卡';
       root.querySelector('#mlQuestions').innerHTML = matches.slice(0, limit).map(function (row) { return card(row.item, f.year); }).join('') || '<div class="empty-ok">沒有符合條件的錯題。</div>';
       root.querySelector('#mlMore').hidden = matches.length <= limit;
-      Array.prototype.forEach.call(root.querySelectorAll('.ml-question'), function (detail) {
-        detail.addEventListener('toggle', function () {
-          if (!detail.open) return;
-          Array.prototype.forEach.call(detail.querySelectorAll('[data-library-image]'), function (img) {
-            img.setAttribute('data-bank-image', img.getAttribute('data-library-image'));
-            img.removeAttribute('data-library-image');
-          });
-          context.hydrate(detail);
-        });
-      });
+      restoreReading(key);
     }
     search.addEventListener('input', function () {
-      f.query = search.value; clearTimeout(timer); timer = setTimeout(function () { limit = 12; draw(); }, 120);
+      f.query = search.value; clearTimeout(timer); timer = setTimeout(function () { limit = 12; draw(); saveReading(); }, 120);
     });
-    root.querySelector('#mlMore').addEventListener('click', function () { limit += 12; draw(); });
+    root.querySelector('#mlMore').addEventListener('click', function () { limit += 12; draw(); saveReading(); });
     draw();
+  }
+  function conceptPanel(code, topicCode, items) {
+    var count = conceptCards(items).length, mc = items.filter(function (item) { return item.kind === 'mc'; });
+    return '<section class="panel ml-concept-panel"><h2>概念回顧 · 先回憶，再核對</h2><p>' + count + ' 張原文回憶卡，整理自本課題已核實的正解與得分要點。閱讀不計作答或掌握。</p><div class="ml-reading-actions">' +
+      '<a class="btn btn-ghost" href="#/library/books/concepts/' + code + '/' + encodeURIComponent(topicCode) + '">打開概念回顧</a>' +
+      (mc.length ? '<a class="btn btn-primary" href="' + esc(drillHref(code,mc.map(function (item) { return item.id; }))) + '">用本課題選擇題獨立檢驗</a>' : '<span class="review-note">本課題尚無選擇題，可在電腦獨立重做原題。</span>') + '</div></section>';
+  }
+  function concepts(code, topicCode) {
+    var subjects = context.data.subjects, subject = subjects[code], base = '#/library/books/concepts';
+    if (!subject) {
+      return frame('concepts',header('概念回顧','從已核實的正解與得分要點回憶；閱讀不計作答。','#/library/books','錯題庫') +
+        '<div class="ml-concept-directory">' + global.DSESubjects.libraryOrder(subjects).map(function (subjectCode) {
+          return '<a class="ml-topic" href="' + base + '/' + subjectCode + '"><h2>' + esc(subjectName(subjectCode)) + '</h2><p>' + conceptCards(subjects[subjectCode].items).length + ' 張原文回憶卡 · 按課題閱讀 →</p></a>';
+        }).join('') + '</div>');
+    }
+    var topic = subject.topics.filter(function (item) { return item.code === topicCode; })[0];
+    if (!topic) return frame('concepts/' + code,header(esc(subjectName(code) + ' · 概念回顧'),'先選課題，再回憶題目要求的知識與得分要點。',base,'科目') +
+      '<div class="ml-concept-directory">' + subject.topics.map(function (item) {
+        var items = subject.items.filter(function (question) { return question.topic === item.code; }), count = conceptCards(items).length;
+        return count ? '<a class="ml-topic" href="' + base + '/' + code + '/' + encodeURIComponent(item.code) + '"><h2>' + esc(item.code + ' · ' + item.name) + '</h2><p>' + count + ' 張原文回憶卡 →</p></a>' : '';
+      }).join('') + '</div><p class="review-note">只列出已有得分要點原文的課題；不補造概念。</p>');
+    var items = subject.items.filter(function (item) { return item.topic === topicCode; }), cards = conceptCards(items), key = 'concepts/' + code + '/' + topicCode;
+    frame(key,header(esc(topic.code + ' · ' + topic.name),'先看題目，用自己的話回憶，再揭曉來源原文。閱讀不會增加掌握證據。',base + '/' + code,'課題') +
+      conceptPanel(code,topicCode,items) + '<p class="review-note">卡片保留已核實資料原文，不代替完整詳解；點題源可查看完整題目、原答與扣分原因。</p>' +
+      (cards.map(function (row) {
+        return '<article class="panel ml-recall-card"><p class="ml-recall-source">' + row.sources.map(function (item) {
+          return '<a href="#/library/books/question/' + code + '/' + encodeURIComponent(item.id) + '">' + esc(itemSource(item) + ' · ' + item.qref) + '</a>';
+        }).join(' · ') + '</p><h2>回憶這道題的概念與得分要點</h2><p class="ml-recall-prompt">' + text(row.prompt) + '</p>' +
+          '<details class="ml-recall" data-reading-id="' + esc(row.id) + '"><summary>回憶後，揭曉已核實原文</summary>' + row.excerpts.map(function (excerpt) {
+            return '<section><h3>' + excerpt.label + '</h3><p>' + text(excerpt.value) + '</p></section>';
+          }).join('') + '</details></article>';
+      }).join('') || '<p class="review-note">此課題尚無可整理的得分要點原文，請先查看原題詳解。</p>'));
   }
   function searchText(item, topic, tags) {
     return [item.id,item.qref,item.stem,item.stemFull,topic && topic.name,item.topic,item.option,item.correctOpt,item.deduct,item.correct,item.points,
@@ -473,11 +681,12 @@
       '<label>題型<select id="globalKind"><option value="">全部題型</option><option value="mc">選擇題</option><option value="sub">主觀題</option></select></label>'+
       '<label>掌握狀態<select id="globalStatus"><option value="">全部狀態</option>'+states.map(function (s) {return '<option value="'+s.key+'">'+s.label+'</option>';}).join('')+'</select></label>'+
       '<label>已確認錯因<select id="globalTag"><option value="">全部標籤</option>'+tags.map(function (tag) {return '<option>'+esc(tag)+'</option>';}).join('')+'</select></label></div>'+
-      '<p id="globalCount" role="status" aria-live="polite"></p><div class="ml-global-results" id="globalResults"></div><button id="globalMore" class="btn btn-ghost" type="button" hidden>顯示更多結果</button>');
+      '<div class="ml-section-head"><p id="globalCount" role="status" aria-live="polite"></p><a id="globalPractice" class="btn btn-primary" hidden>練習篩選結果</a></div><div class="ml-global-results" id="globalResults"></div><button id="globalMore" class="btn btn-ghost" type="button" hidden>顯示更多結果</button>');
     var api=context, root=api.root, timer;
     function draw() {
       if(context!==api || activeKey!=='search')return;
       var rows=searchRows(api.data,api.index,f,api.normalize,api.tags);
+      selectionLink(root.querySelector('#globalPractice'),f.subject || 'all',rows.map(function (row) {return row.item.id;}));
       root.querySelector('#globalCount').textContent=rows.length+' 題符合條件'+(tags.length?'':' · 尚未有已確認的錯因標籤');
       root.querySelector('#globalResults').innerHTML=rows.slice(0,f.limit).map(function (r) {
         return '<a class="ml-search-result" href="#/library/books/question/'+r.code+'/'+encodeURIComponent(r.item.id)+'"><span class="ml-result-meta">'+esc(subjectName(r.code)+' · '+sourceInfo(r.item.year,r.item).label+' · '+r.item.topic+' '+(r.topic?r.topic.name:'')+' · '+r.item.qref)+'</span>'+badge(r.state)+
@@ -485,24 +694,27 @@
       }).join('') || '<div class="empty-note">沒有匹配結果。可減少關鍵詞或放寬篩選條件。</div>';
       root.querySelector('#globalMore').hidden=rows.length<=f.limit;
     }
-    root.querySelector('#globalQuery').addEventListener('input',function (event) {f.query=event.target.value;f.limit=20;clearTimeout(timer);timer=setTimeout(draw,120);});
+    root.querySelector('#globalQuery').addEventListener('input',function (event) {f.query=event.target.value;f.limit=20;saveReading();clearTimeout(timer);timer=setTimeout(draw,120);});
     ['Subject','Year','Kind','Status','Tag'].forEach(function (name) {
       var element=root.querySelector('#global'+name);element.value=f[name.toLowerCase()];
-      element.addEventListener('change',function () {f[name.toLowerCase()]=element.value;f.limit=20;draw();});
+      element.addEventListener('change',function () {f[name.toLowerCase()]=element.value;f.limit=20;draw();saveReading();});
     });
-    root.querySelector('#globalMore').addEventListener('click',function () {f.limit+=20;draw();});
+    root.querySelector('#globalMore').addEventListener('click',function () {f.limit+=20;draw();saveReading();});
     draw();
   }
   function questionPage(code, id) {
     var subject=context.data.subjects[code], item=subject && subject.items.filter(function (it) {return it.id===id;})[0];
     if(!item)return frame('question',header('未找到這道題','請返回搜尋結果或重新載入題庫。','#/library/books/search','搜尋結果'));
     context.code=code;
-    frame('question/'+code+'/'+id,header(esc(subjectName(code)+' · '+sourceInfo(item.year,item).label+' · '+item.qref),'原卷答案與重做、AI 輔評分開保存。','#/library/books/search','搜尋結果')+card(item,''));
+    var back = questionBack();
+    frame('question/'+code+'/'+id,header(esc(subjectName(code)+' · '+sourceInfo(item.year,item).label+' · '+item.qref),'原卷答案與重做、AI 輔評分開保存。',back || '#/library/books/search',back ? '原來的複習位置' : '搜尋結果')+card(item,'',back));
     var detail=context.root.querySelector('.ml-question');
-    if(detail){detail.open=true;Array.prototype.forEach.call(detail.querySelectorAll('[data-library-image]'),function (img) {img.setAttribute('data-bank-image',img.getAttribute('data-library-image'));img.removeAttribute('data-library-image');});context.hydrate(detail);}
+    if(detail){detail.open=true;Array.prototype.forEach.call(detail.querySelectorAll('[data-library-image]'),function (img) {img.setAttribute('data-bank-image',img.getAttribute('data-library-image'));img.removeAttribute('data-library-image');});if(context.hydrate)context.hydrate(detail);}
+    restoreReading('question/'+code+'/'+id);
   }
   function render(parts, api) {
-    context = api; context.index = indexHistory(api.history);
+    chooseUser(api.userId); context = api; context.index = indexHistory(api.history);
+    if(parts[0]==='concepts') { try { return concepts(parts[1],decodeURIComponent(parts[2]||'')); } catch (_) { return concepts(); } }
     if(parts[0]==='search')return globalSearch();
     if(parts[0]==='question') {try{return questionPage(parts[1],decodeURIComponent(parts[2]||''));}catch(_){return overview();}}
     if (!parts.length || !api.data.subjects[parts[0]]) return overview();
@@ -511,8 +723,9 @@
     try { topic = decodeURIComponent(parts[1]); } catch (_) { return topicPage(parts[0]); }
     return questions(parts[0], topic);
   }
-  function reset() { context = null; activeKey = ''; positions = {}; filters = {}; selectedYears = {};searchState={query:'',subject:'',year:'',kind:'',status:'',tag:'',limit:20}; topicGeneration++; }
+  function reset() { clearReading(); context = null; activeKey = ''; memoryUser = ''; positions = {}; filters = {}; selectedYears = {};searchState=blankSearch(); topicGeneration++; }
   global.DSELibrary = { render: render, remember: remember, reset: reset, independentHistory: independentHistory, indexHistory: indexHistory, summarize: summarize, full: full, dailyCandidates: dailyCandidates, searchRows: searchRows,
-    sourceInfo: sourceInfo, compareSources: compareSources, sourceYears: sourceYears, itemSource: itemSource, practiceRubric: practiceRubric, practiceScore: practiceScore, attemptSnapshot: attemptSnapshot, independentAttempt: independentAttempt };
+    sourceInfo: sourceInfo, compareSources: compareSources, sourceYears: sourceYears, itemSource: itemSource, practiceRubric: practiceRubric, practiceScore: practiceScore, attemptSnapshot: attemptSnapshot, independentAttempt: independentAttempt,
+    drillHref:drillHref, conceptCards:conceptCards, submittedAnswers:submittedAnswers };
 })(window);
 

@@ -190,7 +190,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'grading-model-allowlist-20261026');
+  assert.equal(status.version, 'study-continuity-20261102');
   assert.equal(status.passwordConfigured, false);
   assert.equal(status.aiFiguresEnabled, false);
   const enabled = await worker.fetch(new Request(`${BASE}/health`), {...env, DEEPSEEK_API_KEY: 'synthetic-only', AI_VISION: 'true'});
@@ -224,7 +224,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'grading-model-allowlist-20261026', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'study-continuity-20261102', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -250,7 +250,39 @@ test('concurrent drafts merge by answer, and deletion prevents stale answers ret
     pick: { c: 'D' }, text: {}, paper: {}, changedAt: { 'pick:c': 140 }, deletedAt: 130,
   } } };
   assert.deepEqual(mergeBackup(mergeBackup(merged, deleted), newer).drafts['chem:T3'].pick, { c: 'D' });
-  assert.deepEqual(mergeBackup(first, { ...second, cycle: '200' }).drafts['chem:T3'].pick, { b: 'B' });
+  assert.deepEqual(mergeBackup(first, { ...second, cycle: '200' }).drafts['chem:T3'].pick, { a: 'A', b: 'B' });
+});
+
+test('cross-cycle sync preserves unfinished work and explicit deletions in either device order', () => {
+  const base = { app: 'kyle-dse-quiz', sessions: [], archive: [], reviewPlan: {} };
+  const offline = { ...base, cycle: '100', drafts: {
+    'chem:T1': { text: { q: '尚未提交的答案' }, paper: { q: true },
+      steps: { q: { mode: 'steps', rows: [{ prompt: '本題作答', answer: '尚未提交的答案' }] } },
+      changedAt: { 'text:q': 110, 'paper:q': 111, 'steps:q': 112 } },
+    'math:T2': { pick: { m: 'A' }, changedAt: { 'pick:m': 115 } },
+  } };
+  const newCycle = { ...base, cycle: '200', drafts: {
+    'bio:T3': { text: { b: '本輪新增答案' }, changedAt: { 'text:b': 210 } },
+  } };
+  for (const merged of [mergeBackup(offline, newCycle), mergeBackup(newCycle, offline)]) {
+    assert.equal(merged.cycle, '200');
+    assert.equal(merged.drafts['chem:T1'].text.q, '尚未提交的答案');
+    assert.equal(merged.drafts['chem:T1'].paper.q, true);
+    assert.equal(merged.drafts['chem:T1'].steps.q.rows[0].answer, '尚未提交的答案');
+    assert.equal(merged.drafts['math:T2'].pick.m, 'A');
+    assert.equal(merged.drafts['bio:T3'].text.b, '本輪新增答案');
+  }
+
+  const completed = { ...newCycle, drafts: { 'chem:T1': { deletedAt: 220 } } };
+  for (const merged of [mergeBackup(offline, completed), mergeBackup(completed, offline)]) {
+    const reconnected = mergeBackup(merged, offline);
+    assert.equal(reconnected.cycle, '200');
+    assert.equal(reconnected.drafts['chem:T1'].deletedAt, 220);
+    assert.deepEqual(reconnected.drafts['chem:T1'].text, {});
+    assert.deepEqual(reconnected.drafts['chem:T1'].paper, {});
+    assert.deepEqual(reconnected.drafts['chem:T1'].steps, {});
+    assert.equal(reconnected.drafts['math:T2'].pick.m, 'A', 'other unfinished work remains available');
+  }
 });
 
 test('OAuth handoff authenticates and sync merges through GitHub contents API', async t => {

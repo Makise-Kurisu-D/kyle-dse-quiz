@@ -5,6 +5,7 @@
   'use strict';
   var activeUser = localStorage.getItem('dse_quiz_user_v1') || 'kyle';
   var subjectConfig = window.DSESubjects;
+  var study = window.DSEStudy;
   function emptyBank() { return subjectConfig.emptyBank(activeUser); }
   var PRIVATE_BANK = window.QUIZ_PRIVATE_BANK === true;
   var DATA = PRIVATE_BANK ? emptyBank() : window.QUIZ_DATA;
@@ -23,6 +24,11 @@
   LS_SESS = userKey(LS_SESS); LS_DRAFT = userKey(LS_DRAFT);
   LS_ARCHIVE = userKey(LS_ARCHIVE); LS_CYCLE = userKey(LS_CYCLE);
   LS_REVIEW = userKey(LS_REVIEW); LS_TODAY = userKey(LS_TODAY); LS_AI = userKey(LS_AI);
+  var LS_TASK = userKey('dse_quiz_task_v1'), LS_POSITION = userKey('dse_quiz_reader_position_v1');
+  var LS_PENDING = userKey('dse_quiz_pending_review_v1');
+  var currentTask = load(LS_TASK, null), drillSelection = null;
+  var readerPositions = load(LS_POSITION, {}), paperTarget = null;
+  var practiceZoom = null;
   var aiReviews = load(LS_AI, {});
   var todaySelection = null;
   var LS_SYNC_SESSION = 'dse_quiz_sync_session_v1';
@@ -58,6 +64,24 @@
   function load(k, d) {
     try { var v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; }
     catch (e) { return d; }
+  }
+  function compactStudy() {
+    return !!(window.matchMedia && window.matchMedia('(max-width: 860px)').matches);
+  }
+  function taskHref() {
+    if (!currentTask || !currentTask.dkey || !Array.isArray(currentTask.ids) || (currentTask.code !== 'all' && SUBJECT_ORDER.indexOf(currentTask.code) < 0)) return '';
+    var pool = itemsOf(currentTask.code || 'all');
+    return pool.some(function (it) { return currentTask.ids.indexOf(it.id) >= 0 && (currentTask.remaining || study.answered(it, drafts[currentTask.dkey])); })
+      ? study.safeRoute(currentTask.href) : '';
+  }
+  function rememberTask(code, dkey, items) {
+    currentTask = { code: code, dkey: dkey, ids: items.map(function (it) { return it.id; }),
+      href: study.drillHref(code, items.map(function (it) {return it.id;}), sessState.back || '#/', dkey), back: sessState.back || '#/', at: Date.now() };
+    localStorage.setItem(LS_TASK, JSON.stringify(currentTask));
+  }
+  function pendingVersion(item) {
+    return window.DSELibrary.attemptSnapshot(Object.assign({}, item, {marks: marksOf(item)}), '', [],
+      {marks: 0, tot: marksOf(item)}, 0).questionVersion;
   }
   function save() {
     localStorage.setItem(LS_SESS, JSON.stringify(sessions));
@@ -137,7 +161,7 @@
     var localCycle = Number(localStorage.getItem(LS_CYCLE) || 0);
     var remoteCycle = Number(remote.cycle || 0);
     var cycle = Math.max(localCycle, remoteCycle);
-    drafts = mergeDrafts(remoteCycle === cycle ? remote.drafts : {}, localCycle === cycle ? drafts : {});
+    drafts = mergeDrafts(remote.drafts || {}, drafts);
     var plans = Object.assign({}, remote.reviewPlan || {});
     Object.keys(reviewPlan).forEach(function (id) {
       if (!plans[id] || (reviewPlan[id].lastAt || 0) >= (plans[id].lastAt || 0)) plans[id] = reviewPlan[id];
@@ -281,6 +305,8 @@
     syncMessage = message;
     var el = $('#syncStatus');
     if (el) { el.textContent = message; el.hidden = false; }
+    var draftStatus = $('#draftSaveStatus');
+    if (draftStatus) draftStatus.textContent = '答案已保存在本機 · ' + message;
   }
   function forgetBank() {
     bankRequest++;
@@ -398,6 +424,10 @@
   function refreshBankView() {
     // Paper browsing has its own requests and must not restart when the bank arrives.
     if (location.hash.indexOf('#/library/papers') !== 0) route(true);
+    else if (paperManifest) {
+      if (paperReader && paperReader.layoutChange) paperReader.layoutChange(function () {renderPaperReview();});
+      else renderPaperReview();
+    }
   }
   function bankStatusHtml() {
     if (bankLoaded) return '';
@@ -535,9 +565,7 @@
         localStorage.setItem(LS_ARCHIVE, JSON.stringify(archive));
       }
       sessions = [];
-      drafts = {};
       localStorage.setItem(LS_SESS, JSON.stringify([]));
-      localStorage.removeItem(LS_DRAFT);
       localStorage.setItem(LS_CYCLE, String(cur));
       syncRevision++;
       scheduleSync();
@@ -607,7 +635,7 @@
     }).length;
   }
 
-  // 間隔複習：配合雙週週期，最早在 15 日後提醒。
+  // Short corrective checks are independent of the fortnightly reporting period.
   var REVIEW_DAYS = [15, 21, 30, 45, 60];
   function updateReviewPlan(id, result, at) {
     var previous = reviewPlan[id];
@@ -616,10 +644,10 @@
     // Early drills and assisted answers do not postpone an already scheduled review.
     if (previous && ((passed && at < previous.dueAt) || result.assisted || (result.attempt && result.attempt.assisted))) return;
     var level = passed ? Math.min(previous ? previous.level + 1 : 0, REVIEW_DAYS.length - 1) : 0;
-    var days = REVIEW_DAYS[level];
+    var days = passed ? REVIEW_DAYS[level] : 2;
     reviewPlan[id] = {
       level: level, interval: days, lastAt: at, dueAt: at + days * 864e5,
-      ratio: ratio, streak: passed ? ((previous && previous.streak) || 0) + 1 : 0
+      ratio: ratio, streak: passed ? ((previous && previous.streak) || 0) + 1 : 0, scheduleVersion: 2
     };
   }
   function reviewDue(id, now) {
@@ -645,7 +673,7 @@
     Object.keys(reviewPlan).forEach(function (id) {
       var p = reviewPlan[id];
       if (!p || typeof p.lastAt !== 'number' || typeof p.dueAt !== 'number') return;
-      var earliest = p.lastAt + minInterval * 864e5;
+      var earliest = p.lastAt + (p.scheduleVersion === 2 && p.ratio < 1 ? 2 : minInterval) * 864e5;
       if (p.dueAt < earliest) {
         p.level = 0;
         p.interval = minInterval;
@@ -700,11 +728,15 @@
 
   /* ---------------- 路由 ---------------- */
   function route(preserveScroll) {
+    closePracticeZoom();
     window.DSELibrary.remember();
+    // Capture the old reading anchor before the new route resets its scroll pane.
+    if (paperReader) releasePaper();
     if (imageObserver) imageObserver.disconnect();
     var h = location.hash.replace(/^#/, '').split('?')[0] || '/';
     var parts = h.split('/').filter(Boolean);
     var view = parts[0] || 'home';
+    if (view !== 'drill') drillSelection = null;
     renderArchiveBackdrop(view === 'library' && parts[1] === 'books');
     if (view !== 'library') releasePaper();
     $all('.rail-item,.tab-item').forEach(function (a) {
@@ -724,6 +756,7 @@
     if (view === 'library') return renderLibrary(parts.slice(1));
     if (view === 'random') return renderRandomPicker();
     if (view === 'today') return renderToday(parts[1], parts[2]);
+    if (view === 'drill') return renderDrill(parts[1]);
     if (view === 'session') {
       if (parts[2] === '__today__') return renderToday(parts[1], 5);
       renderSession(parts[1], decodeURIComponent(parts[2] || ''), undefined, parts[3]);
@@ -778,18 +811,23 @@
       return n + itemsOf(code).filter(function (item) { return historyIndex[item.id] && historyIndex[item.id].state === 'mastered'; }).length;
     }, 0);
     var remainingDays = Math.ceil((cycleEndOf(Date.now()) - Date.now()) / DAY_MS);
-    var todayDue = todayRows('all').filter(function (r) { return r.due; }).length;
+    var mode = compactStudy() ? 'mc' : 'all';
+    var todayDue = todayRows('all', mode).filter(function (r) { return r.due; }).length;
+    var resume = taskHref(), savedDraft = !resume && study.draftTask(drafts, DATA);
+    if (savedDraft) resume = savedDraft.href;
     return (
       '<section class="home"><div class="home-stage">' +
         '<div class="hero">' +
           '<div class="hero-kicker">' + (activeUser === 'yeelam' ? 'Yeelam' : 'Kyle') + ' 嘅錯題本 / DSE</div>' +
           '<h1 class="hero-title"><span class="hero-en">REVISIT</span><span class="hero-zh">從錯題，再出發。</span></h1>' +
-          '<div class="preview-today-label">YOUR NEXT MOVE <span>／ 今日複習</span></div>' +
+          '<div class="preview-today-label">YOUR NEXT MOVE <span>／ ' + (compactStudy() ? '輕量複習' : '今日複習') + '</span></div>' +
           '<div class="preview-due"><strong>' + (bankLoaded ? todayDue : '—') + '</strong><span>題到期<br><small>READY TO REVIEW</small></span></div>' +
-          '<p class="preview-review-hint">' + (bankLoaded && todayDue === 0 ? '暫無到期題，仍可開始複習' : '優先安排到期題，最多 5 題') + '</p>' +
-          '<a class="continue-command" href="#/today/all/5"><b aria-hidden="true">START</b><span>開始今日複習 ↗</span></a>' +
+          '<p class="preview-review-hint">' + (compactStudy() ? '手機先看概念、練選擇題；長答可在電腦繼續。' : '選擇適合本次的題型與題數，完成一部分也可以儲存。') + '</p>' +
+          '<a class="continue-command" id="homeReviewStart" href="#/today/all/5?kind=' + mode + '"><b aria-hidden="true">START</b><span>' + (compactStudy() ? '開始選擇題輕練習' : '開始今日複習') + ' ↗</span></a>' +
+          (resume ? '<a class="btn btn-ghost home-resume" id="resumeStudy" href="' + esc(resume) + '">繼續未完成的作答 →</a>' : '') +
+          '<div class="home-quick-links"><a class="btn btn-ghost" href="#/library/books/concepts">概念回顧</a><a class="btn btn-ghost" href="#/library/papers">歷年試卷</a><a class="btn btn-ghost" href="#/records">學習數據</a></div>' +
           '<div class="home-info" role="group" aria-label="學習與同步資訊">' +
-          '<p class="hero-sub hero-bubble bubble-intro">錯過嘅唔可以再錯 —— 逐課題清，每個踩分點都執返。</p>' +
+          '<p class="hero-sub hero-bubble bubble-intro">每次弄懂一點，都會留下進步。完成今天這一小步就好。</p>' +
           '<p class="review-note hero-bubble bubble-sync" id="syncStatus" role="status" aria-live="polite"' + (syncMessage ? '' : ' hidden') + '>' + esc(syncMessage) + '</p>' +
           bankStatusHtml() +
           '<p class="home-bank-total hero-bubble bubble-bank"><b>' + (bankLoaded ? totalItems : '—') + '</b> 題在庫<span class="bank-privacy">題庫及原卷僅供登入後讀取</span></p>' +
@@ -853,34 +891,41 @@
     startCycleTimer();
     var subject = $('#todaySubject'), count = $('#todayCount');
     function updateToday() {
-      var rows = todayRows(subject.value || 'all'), n = Math.min(Number(count.value) || 5, rows.length);
-      $('#todayStart').href = '#/today/' + (subject.value || 'all') + '/' + (count.value || '5');
-      $('#todaySummary').textContent = bankLoaded ? rows.filter(function (r) { return r.due; }).length + ' 題到期 · 本次 ' + n + ' 題（北京時間）' : '題庫尚未載入';
+      var kind = $('#todayKind').value || (compactStudy() ? 'mc' : 'all');
+      var rows = todayRows(subject.value || 'all', kind), n = Math.min(Number(count.value) || 5, rows.length);
+      $('#todayStart').href = '#/today/' + (subject.value || 'all') + '/' + (count.value || '5') + '?kind=' + kind;
+      var selected = rows.slice(0, n), mc = selected.filter(function (r) { return r.item.kind === 'mc'; }).length;
+      $('#todaySummary').textContent = bankLoaded ? rows.filter(function (r) { return r.due; }).length + ' 題到期 · 本次 ' + mc + ' 道選擇題、' + (n-mc) + ' 道大題 · 共 ' + selected.reduce(function (sum, r) {return sum+marksOf(r.item);}, 0) + ' 分（北京時間）' : '題庫尚未載入';
     }
     subject.addEventListener('change', updateToday); count.addEventListener('change', updateToday);
+    $('#todayKind').value = compactStudy() ? 'mc' : 'all';
+    $('#todayKind').addEventListener('change', updateToday); updateToday();
   }
-  function todayRows(code) { return window.DSELibrary.dailyCandidates(DATA, allSessions(), reviewPlan, code, Date.now()); }
+  function todayRows(code, kind) { return window.DSELibrary.dailyCandidates(DATA, allSessions(), reviewPlan, code, Date.now()).filter(function (r) { return !kind || kind === 'all' || r.item.kind === kind; }); }
   function todayMarkup() {
     var rows = todayRows('all'), due = rows.filter(function (r) { return r.due; }).length;
     return '<section class="panel today-review" aria-label="今日複習"><h2>今日複習</h2>' +
       '<p id="todaySummary" role="status">' + (bankLoaded ? due + ' 題到期 · 本次 ' + Math.min(5, rows.length) + ' 題（北京時間）' : '題庫尚未載入') + '</p>' +
       '<p class="review-note">優先安排到期、答對後回退和連續答錯的題目，再參考已核實原卷失分。</p>' +
       '<div class="today-controls"><label>科目 <select id="todaySubject"><option value="all">全部科目</option>' + SUBJECT_ORDER.map(function (c) { return '<option value="' + c + '">' + SUBJECT_META[c].name + '</option>'; }).join('') + '</select></label>' +
-      '<label>短練習 <select id="todayCount"><option value="5">5 題</option><option value="10">10 題</option><option value="15">15 題</option></select></label>' +
+      '<label>題型 <select id="todayKind"><option value="mc">選擇題輕練習</option><option value="all">混合練習</option><option value="sub">大題專注練習</option></select></label>' +
+      '<label>題數 <select id="todayCount"><option value="1">1 題</option><option value="3">3 題</option><option value="5" selected>5 題</option><option value="10">10 題</option><option value="15">15 題</option></select></label>' +
       '<a class="btn btn-primary" id="todayStart" href="#/today/all/5">開始今日複習</a></div></section>';
   }
   function renderToday(code, limit) {
     code = SUBJECT_ORDER.indexOf(code) >= 0 ? code : 'all';
-    limit = [5, 10, 15].indexOf(Number(limit)) >= 0 ? Number(limit) : 5;
-    var rows = todayRows(code), saved = load(LS_TODAY, null), day = beijingDayIndex(Date.now());
-    if (saved && saved.day === day && saved.code === code && saved.limit === limit && Array.isArray(saved.ids)) {
+    limit = [1, 3, 5, 10, 15].indexOf(Number(limit)) >= 0 ? Number(limit) : 5;
+    var kind = study.query(location.hash).kind || (compactStudy() ? 'mc' : 'all');
+    if (['mc', 'sub', 'all'].indexOf(kind) < 0) kind = 'all';
+    var rows = todayRows(code, kind), saved = load(LS_TODAY, null), day = beijingDayIndex(Date.now());
+    if (saved && saved.day === day && saved.code === code && saved.kind === kind && saved.limit === limit && Array.isArray(saved.ids)) {
       var ids = new Set(saved.ids); rows = rows.filter(function (r) { return ids.has(r.item.id); });
       rows.sort(function (a, b) { return saved.ids.indexOf(a.item.id) - saved.ids.indexOf(b.item.id); });
     } else rows = rows.slice(0, limit);
-    todaySelection = { day: day, code: code, limit: limit, ids: rows.map(function (r) { return r.item.id; }), rows: rows };
-    localStorage.setItem(LS_TODAY, JSON.stringify({ day: day, code: code, limit: limit, ids: todaySelection.ids }));
+    todaySelection = { day: day, code: code, kind: kind, limit: limit, ids: rows.map(function (r) { return r.item.id; }), rows: rows };
+    localStorage.setItem(LS_TODAY, JSON.stringify({ day: day, code: code, kind: kind, limit: limit, ids: todaySelection.ids }));
     if (!rows.length) {
-      $('#app').innerHTML = '<section class="page"><h1 class="page-title">今日複習</h1><p>目前沒有可練習的題目。</p><a class="btn btn-primary" href="#/">返回主頁</a></section>'; return;
+      $('#app').innerHTML = '<section class="page"><h1 class="page-title">今日複習</h1><p>目前沒有符合這個題型的題目。可以先回顧概念或查看歷年試卷。</p><a class="btn btn-primary" href="#/library/books/concepts">概念回顧</a> <a class="btn btn-ghost" href="#/library/papers">歷年試卷</a> <a class="btn btn-ghost" href="#/">返回主頁</a></section>'; return;
     }
     renderSession(code, '__today__');
   }
@@ -929,7 +974,7 @@
     releasePaper();
     parts = parts || [];
     if (parts[0] === 'books') return window.DSELibrary.render(parts.slice(1), {
-      root: $('#app'), scrollRoot: $('#contentScroll'), data: DATA, history: allSessions(), cycleStart: cycleStartOf(Date.now()), loaded: bankLoaded,
+      root: $('#app'), scrollRoot: $('#contentScroll'), userId: activeUser, data: DATA, history: allSessions(), cycleStart: cycleStartOf(Date.now()), loaded: bankLoaded,
       normalize: norm, formatDate: fmtDateTime, hydrate: hydratePrivateImages, gradeMetrics: paperGradeMetrics, tags: confirmedTags,
       aiHtml: function (id) { var row=latestAI(id);return row ? '<details class="ai-saved"><summary>已確認 AI 輔評 · '+esc(fmtDateTime(row.confirmedAt))+'</summary><p>與原卷判分分開保存 · 標籤：'+esc((row.tags||[]).join('、')||'未選擇')+'</p>'+aiFeedbackHtml(row.feedback)+'</details>' : ''; },
       catalog: function () {
@@ -1077,12 +1122,62 @@
         (metrics ? '等級按原批改總結的民間參考分界估算' : '可先閱讀完整批改卷') + '</span></a>';
   }
   function releasePaper() {
+    if (paperReader && paperReader.getPosition && paperManifest) saveReaderPosition(paperReader.getPosition());
     paperRequest++;
     paperToolsOpen = false; paperHeaderVisible = false;
     if (paperController) { paperController.abort(); paperController = null; }
     if (paperReader) { paperReader.destroy(); paperReader = null; }
     paperManifest = null;
     clearReaderPages();
+  }
+  function paperPositionKey() { return paperSubject + '/' + paperYear + '/' + (paperIdentifier || ''); }
+  function saveReaderPosition(position) {
+    if (!paperManifest || !position) return;
+    readerPositions[paperPositionKey()] = Object.assign({}, position, { version: paperManifest.version, at: Date.now() });
+    var keys = Object.keys(readerPositions).sort(function (a,b) {return readerPositions[b].at-readerPositions[a].at;});
+    keys.slice(100).forEach(function (key) {delete readerPositions[key];});
+    try { localStorage.setItem(LS_POSITION, JSON.stringify(readerPositions)); } catch (_) {}
+  }
+  function renderPaperReview(target) {
+    var root = $('#paperReviewPanel');
+    if (!root || !paperManifest) return;
+    var previousDock = root.querySelector && root.querySelector('.paper-review-dock');
+    var dockOpen = previousDock && typeof previousDock.open === 'boolean' ? previousDock.open : !compactStudy();
+    var focusedControl = document.activeElement && /^(?:paperMistakeSelect|paperPendingOnly)$/.test(document.activeElement.id) ? document.activeElement.id : '';
+    var targets = paperManifest.mistakes || [], index = window.DSELibrary.indexHistory(allSessions());
+    if (target) paperTarget = target;
+    if (!paperTarget && targets.length) paperTarget = targets[0];
+    var rows = targets.map(function (m, i) {
+      var matches = study.paperMatches(m, itemsOf(paperSubject), paperYear, paperIdentifier);
+      var passed = matches.length > 0 && matches.every(function (it) {return index[it.id] && ['learning','mastered'].indexOf(index[it.id].state) >= 0;});
+      return { target: m, matches: matches, number: i+1, passed: passed };
+    });
+    var pendingOnly = load(userKey('dse_quiz_paper_pending_v1'), false);
+    var current = rows.filter(function (r) {return paperTarget && r.target.page === paperTarget.page && r.target.label === paperTarget.label;})[0];
+    var matches = current ? current.matches : [];
+    var back = '#/library/papers/' + paperSubject + '/' + paperYear + (paperIdentifier ? '/' + paperIdentifier : '') +
+      (paperTarget ? '?mistake=' + encodeURIComponent(paperTarget.label) : '');
+    root.innerHTML = '<details class="paper-review-dock"' + (dockOpen ? ' open' : '') + '><summary>本卷錯題復盤 · ' + targets.length + ' 處</summary>' +
+      '<div class="paper-review-body"><label class="paper-pending"><input type="checkbox" id="paperPendingOnly"' + (pendingOnly ? ' checked' : '') + '> 只看尚未全對</label>' +
+      '<label>選擇錯題<select id="paperMistakeSelect"><option value="">選擇批注位置</option>' + rows.filter(function (r) {return !pendingOnly || !r.passed;}).map(function (r) {
+        return '<option value="' + r.number + '"' + (current === r ? ' selected' : '') + '>' + esc(r.target.label) + ' · ' + (r.passed ? '已重做全對' : '待重做／鞏固') + '</option>';
+      }).join('') + '</select></label>' +
+      '<h2>' + esc(paperTarget ? paperTarget.label : '本卷暫無錯題位置') + '</h2>' +
+      '<p class="review-note">原卷分數保留正式批改結果。重做、閱讀和長期掌握分開記錄。</p>' +
+      (matches.length ? '<a class="btn btn-primary" id="paperRedo" href="' + esc(study.drillHref(paperSubject, matches.map(function (it) {return it.id;}), back)) + '">' + (matches.length === 1 ? '獨立重做這一題' : '重做這處的 ' + matches.length + ' 個小題') + '</a>' + matches.map(function (it) {
+        return '<a class="paper-question-link" href="#/library/books/question/' + paperSubject + '/' + encodeURIComponent(it.id) + '?back=' + encodeURIComponent(back) + '">' + esc(it.qref) + ' · 文字題目／錯因與作答對照</a>';
+      }).join('') : '<p>這處批注尚未關聯到可練習的題目，可先閱讀原卷或到錯題庫搜尋。</p><a class="btn btn-ghost" href="#/library/books/search">搜尋錯題</a>') +
+      '<button class="btn btn-ghost" id="paperReviewZoom" type="button">站內放大這一頁</button></div></details>';
+    $('#paperPendingOnly').addEventListener('change', function (event) {localStorage.setItem(userKey('dse_quiz_paper_pending_v1'), JSON.stringify(event.target.checked));renderPaperReview();});
+    $('#paperMistakeSelect').addEventListener('change', function (event) {if (paperReader && event.target.value) paperReader.goMistake(Number(event.target.value));});
+    $('#paperReviewZoom').addEventListener('click', function () {if (paperReader && paperReader.openZoom) paperReader.openZoom(paperTarget && paperTarget.page, paperTarget);});
+    if (focusedControl && dockOpen) $('#' + focusedControl).focus({preventScroll:true});
+    var quick = $('#paperQuickActions');
+    if (quick) {
+      quick.hidden = !matches.length;
+      if (matches.length) quick.innerHTML = '<a class="btn btn-primary" id="paperQuickRedo" href="' + esc(study.drillHref(paperSubject, matches.map(function (it) {return it.id;}), back)) + '">重做 ' + esc(paperTarget.label) + '</a>' +
+        '<a class="btn btn-ghost" href="#/library/books/question/' + paperSubject + '/' + encodeURIComponent(matches[0].id) + '?back=' + encodeURIComponent(back) + '">看文字與錯因</a>';
+    }
   }
   function paperError(err, session, requestId, status, pageRequest) {
     if (requestId !== paperRequest) return;
@@ -1175,9 +1270,18 @@
   function startPaperReader(session, requestId) {
     var subject = paperSubject, year = paperYear, manifest = paperManifest;
     var base = '/papers/' + subject + '/' + year + (paperIdentifier ? '/' + paperIdentifier : '');
+    var saved = readerPositions[paperPositionKey()];
+    var initialPosition = saved ? {page: Math.min(saved.page || 1, manifest.pages), fraction: saved.version === manifest.version ? saved.fraction || 0 : 0,
+      mistakeLabel: saved.version === manifest.version ? saved.mistakeLabel : undefined} : null;
+    paperTarget = initialPosition && initialPosition.mistakeLabel && (manifest.mistakes || []).filter(function (m) {return m.label === initialPosition.mistakeLabel;})[0] || null;
+    // Build the mobile dock before restoring an anchor below it.
+    renderPaperReview();
     paperReader = window.DSEPaperReader({
       root: $('#paperReader'), scrollRoot: $('#contentScroll'), thumbs: $('#paperThumbList'),
       toolbar: $('#paperToolbar'), manifest: manifest, page: paperPage,
+      initialPosition: initialPosition,
+      onPosition: saveReaderPosition,
+      onMistake: function (target) {renderPaperReview(target);},
       title: SUBJECT_META[subject].name + ' ' + year + ' 年紅筆批改卷',
       loadPage: function (page) { return readerPage(base + '/pages/' + manifest.version + '/' + page, session); },
       loadThumbnails: function () { return readerPage(base + '/thumbnails/' + manifest.version, session); },
@@ -1202,6 +1306,12 @@
         }
       }
     });
+    var requestedLabel = study.query(location.hash).mistake;
+    if (requestedLabel && paperReader.goMistake) {
+      var requestedTarget = (manifest.mistakes || []).filter(function (m) {return m.label === requestedLabel;})[0];
+      if (requestedTarget) paperReader.goMistake(requestedTarget);
+      history.replaceState(null, '', location.hash.split('?')[0]);
+    }
   }
   function goPaperPage(page) {
     if (paperReader) paperReader.go(page);
@@ -1282,15 +1392,17 @@
           '<div class="paper-tool-actions"><button class="btn btn-ghost" id="paperPrev" type="button" disabled>← 上一頁</button>' +
           '<button class="btn btn-ghost" id="paperNext" type="button" disabled>下一頁 →</button>' +
           '<button class="btn btn-ghost" id="paperReload" type="button">重新載入</button>' +
-          '<a class="btn btn-ghost" id="paperOpen" target="_blank" rel="noopener" hidden>放大本頁 ↗</a>' +
+          '<button class="btn btn-ghost" id="paperOpen" type="button" hidden>站內放大本頁</button>' +
           '<button class="btn btn-ghost" id="paperHeaderToggle" type="button" aria-pressed="false">顯示網站頂欄</button></div></div></div>' +
       '<p class="review-note paper-status" id="paperStatus" role="status" aria-live="polite"></p>' +
+      '<div class="paper-quick-actions" id="paperQuickActions" hidden></div>' +
       '<div class="paper-workspace" id="paperWorkspace"><aside class="paper-thumbnails" id="paperThumbnails" aria-label="批改卷頁面預覽">' +
         '<div class="paper-thumb-heading"><strong>頁面預覽</strong><button class="btn btn-ghost" id="paperThumbClose" type="button">收起</button></div>' +
         '<p class="library-note" id="paperThumbStatus">點選頁面跳轉</p><div class="paper-thumb-list" id="paperThumbList"></div></aside>' +
-        '<div class="paper-stream" id="paperReader" hidden></div></div></section>';
+        '<div class="paper-stream" id="paperReader" hidden></div><aside class="paper-review-panel" id="paperReviewPanel" aria-label="本卷錯題復盤"></aside></div></section>';
     $('#paperReader').hidden = true;
     $('#paperOpen').hidden = true; $('#paperOpen').href = '';
+    $('#paperOpen').addEventListener('click', function () {setPaperTools(false, true);if (paperReader && paperReader.openZoom) paperReader.openZoom(paperPage, paperTarget && paperTarget.page === paperPage ? paperTarget : undefined);});
     $('#paperReload').addEventListener('click', function () { releasePaper(); renderPaperReader(subject, year, true, identifier); });
     $('#paperSections').addEventListener('click', function (event) {
       var button = event.target.closest('[data-page]');
@@ -1514,7 +1626,25 @@
   var reviewState = null;   // 提交後的批改結果
   var sessState = { code: null, topic: null, mcOnly: false };
 
+  function renderDrill(code) {
+    if (code !== 'all' && SUBJECT_ORDER.indexOf(code) < 0) return renderPractice(SUBJECT_ORDER[0]);
+    var query = study.query(location.hash), requested = String(query.ids || '').split(',').filter(Boolean).slice(0, 100);
+    var pool = itemsOf(code), seen = new Set(), items = [];
+    requested.forEach(function (id) {
+      var item = pool.filter(function (it) { return it.id === id; })[0];
+      if (item && !seen.has(id)) { seen.add(id); items.push(item); }
+    });
+    if (!items.length) {
+      $('#app').innerHTML = '<section class="page"><h1 class="page-title">定向練習</h1><p>這組題目暫未收錄，或題庫已更新。請重新選題。</p><a class="btn btn-primary" href="#/library/books">返回錯題庫</a></section>';
+      return;
+    }
+    drillSelection = { items: items, back: study.safeRoute(query.back, '#/library/books'),
+      draft: query.draft && drafts[query.draft] && query.draft.split(':')[0] === code ? query.draft : '' };
+    renderSession(code, '__drill__', false);
+  }
+
   function sessionItems(code, topic, mcOnly, year) {
+    if (topic === '__drill__') return (drillSelection ? drillSelection.items : []).filter(function (it) { return !mcOnly || it.kind === 'mc'; });
     if (topic === '__today__') {
       if (!todaySelection) {
         var rows = todayRows(code).slice(0, 5);
@@ -1545,26 +1675,36 @@
         '<a class="btn btn-primary" href="#/random">← 返隨機十題</a></section>';
       return;
     }
-    if (mcOnly === undefined) mcOnly = false;
+    var requestedKind = study.query(location.hash).kind;
+    if (mcOnly === undefined) mcOnly = topic !== '__drill__' && (requestedKind === 'mc' || (!requestedKind && compactStudy()));
     year = /^20\d{2}$/.test(year || '') ? String(year) : '';
     sessState = { code: code, topic: topic, mcOnly: mcOnly, year: year };
     var items = sessionItems(code, topic, mcOnly, year);
-    if (!items.length) { location.hash = practiceHref(code, year); return; }
+    if (!items.length) {
+      if (compactStudy() && mcOnly) {
+        $('#app').innerHTML = '<section class="page"><h1 class="page-title">本課題以大題為主</h1><p>手機可以先回顧概念和原卷；完整大題可在電腦繼續。</p><a class="btn btn-primary" href="#/library/books/concepts/' + code + '/' + encodeURIComponent(topic) + '">回顧本課題概念</a> <a class="btn btn-ghost" href="' + esc(location.hash.split('?')[0] + '?kind=all') + '">在此完整作答</a></section>';
+      } else location.hash = practiceHref(code, year);
+      return;
+    }
     // 課題模式仍渲染全部題（大題靠 CSS 動畫收起）；隨機模式只渲染抽出的題
-    var renderItems = (topic === '__random__' || topic === '__today__') ? items :
+    var renderItems = (topic === '__random__' || topic === '__today__' || topic === '__drill__') ? items :
       itemsOf(code).filter(function (it) { return it.topic === topic && (!year || String(it.year) === year); });
     var activeIds = {};
     items.forEach(function (it) { activeIds[it.id] = true; });
 
     var dkey = code + ':' + topic +
-      (topic === '__random__' || topic === '__today__' ? ':' + (mcOnly ? 'mc:' : '') +
+      (topic === '__random__' || topic === '__today__' || topic === '__drill__' ? ':' + (mcOnly ? 'mc:' : '') +
         items.map(function (i) { return i.id; }).join(',') : '');
-    var draft = drafts[dkey] || { pick: {}, text: {}, paper: {} };
+    if (topic === '__drill__' && drillSelection.draft) dkey = drillSelection.draft;
+    var draft = mergeDraft({}, drafts[dkey]);
     reviewState = null;
 
     var title = topic === '__random__'
       ? (mcOnly ? '<span class="persona-icon persona-icon-random" aria-hidden="true"></span> 隨機十題（選擇題）' : '<span class="persona-icon persona-icon-random" aria-hidden="true"></span> 隨機十題')
-      : topic === '__today__' ? '今日複習' : esc(topic + ' ' + topicName(code, topic));
+      : topic === '__today__' ? '今日複習' : topic === '__drill__' ? (items.length === 1 ? '獨立重做這一題' : '定向練習 · ' + items.length + ' 題') : esc(topic + ' ' + topicName(code, topic));
+    var back = topic === '__drill__' ? drillSelection.back : topic === '__today__' ? '#/' : topic === '__random__' && !year ? '#/random' : practiceHref(code, year);
+    sessState.back = back;
+    rememberTask(code, dkey, items);
     var nMc = renderItems.filter(function (it) { return it.kind === 'mc'; }).length;
     var nSub = renderItems.length - nMc;
     $('#app').innerHTML =
@@ -1584,7 +1724,7 @@
                 (nSub ? '<small>' + nMc + ' MC / ' + nSub + ' 大題</small>' : '') + '</span>' +
             '</label>' +
             '<a class="btn btn-ghost" href="' +
-              (topic === '__random__' && !year ? '#/random' : practiceHref(code, year)) + '">← 離開</a>' +
+              esc(back) + '">← 暫停／返回</a>' +
           '</div>' +
         '</header>' +
         (topic === '__random__'
@@ -1601,18 +1741,76 @@
             '</div>' : '') +
         (mcOnly && nSub ? '<div class="mc-only-note"><span class="persona-icon persona-icon-fast" aria-hidden="true"></span> 已切為只做選擇題：' + nSub +
           ' 道大題已收起，今次唔使答、唔計分、唔入記錄。</div>' : '') +
+        '<p class="review-note" id="draftSaveStatus" role="status">作答自動保存在本機，登入後同步；未完成題不計零分。</p>' +
+        '<nav class="question-jump" aria-label="本次題目">' + items.map(function (it, i) { return '<a href="#question-' + esc(it.id) + '" data-jump-question="' + esc(it.id) + '">' + (i+1) + '</a>'; }).join('') + '</nav>' +
+        (compactStudy() && nSub ? '<p class="review-note">這組含大題；可隨時暫停，回到電腦繼續，或只提交已完成的題目。</p>' : '') +
         '<div class="q-paper" id="qPaper">' +
           renderItems.map(function (it, idx) { return questionHtml(it, idx, draft, mcOnly); }).join('') +
         '</div>' +
         '<div class="submit-bar" id="submitBar">' +
           '<button class="btn btn-primary btn-lg" id="submitBtn" type="button">' +
             (mcOnly ? '<span class="persona-icon persona-icon-success" aria-hidden="true"></span> 提交 ' + nMc + ' 道選擇題' : '<span class="persona-icon persona-icon-success" aria-hidden="true"></span> 全部做完，一次過提交') + '</button>' +
+          '<button class="btn btn-ghost" id="submitAnsweredBtn" type="button">提交已完成的題目</button>' +
         '</div>' +
         '<div class="result-panel" id="resultPanel" hidden></div>' +
       '</section>';
 
     bindSession(code, topic, dkey, renderItems, items, mcOnly);
     hydratePrivateImages();
+    bindPracticeImages($('#qPaper'));
+    var pending = load(LS_PENDING, null);
+    if (pending && pending.dkey === dkey && Array.isArray(pending.ids) && pending.ids.length && pending.versions && pending.draft) {
+      var pendingItems = renderItems.filter(function (it) { return pending.ids.indexOf(it.id) >= 0; });
+      if (pendingItems.length === pending.ids.length && pendingItems.every(function (it) { return pending.versions[it.id] === pendingVersion(it); })) {
+        submitSession(code, topic, dkey, pendingItems, pending.draft, pending.mcOnly, pending.scores || {});
+      } else { localStorage.removeItem(LS_PENDING); toast('題目已更新，原草稿保留，請重新提交核對。'); }
+    }
+  }
+
+  function closePracticeZoom() {
+    if (!practiceZoom) return;
+    var state = practiceZoom; practiceZoom = null;
+    if (state.dialog.close && state.dialog.open) state.dialog.close();
+    state.dialog.remove();
+    if (state.trigger.isConnected) state.trigger.focus({preventScroll:true});
+  }
+  function bindPracticeImages(root) {
+    $all('img.q-img', root).forEach(function (original) {
+      original.tabIndex = 0; original.setAttribute('role', 'button');
+      original.setAttribute('aria-label', (original.alt || '原題圖片') + '，點擊站內放大');
+      original.title = '點擊放大原題圖片，關閉後繼續作答';
+      function open(event) {
+        if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        if (!original.complete || !original.naturalWidth) {toast('圖片尚未載入，請稍後再試。');return;}
+        closePracticeZoom();
+        var dialog = document.createElement('dialog');
+        dialog.className = 'paper-zoom practice-image-zoom'; dialog.setAttribute('aria-label','原題圖片放大');
+        dialog.innerHTML = '<div class="paper-zoom-head"><strong>原題圖片</strong><div class="paper-zoom-controls">' +
+          '<button class="btn btn-ghost" data-image-scale="out" type="button" aria-label="縮小原題圖片">−</button>' +
+          '<button class="btn btn-ghost" data-image-scale="fit" type="button">適合寬度</button>' +
+          '<button class="btn btn-ghost" data-image-scale="in" type="button" aria-label="放大原題圖片">＋</button>' +
+          '<button class="btn btn-primary" data-image-close type="button">返回這道題</button></div></div>' +
+          '<p class="paper-zoom-status" role="status">可左右及上下捲動查看，原作答保留。</p><div class="paper-zoom-viewport" tabindex="0"><img class="paper-zoom-image" alt="' + esc(original.alt || '原題圖片') + '"></div>';
+        document.body.appendChild(dialog); practiceZoom = {dialog:dialog,trigger:original};
+        var viewport = $('.paper-zoom-viewport', dialog), image = $('img', dialog), scale = 1;
+        function resize() {
+          image.style.width = Math.max(1,viewport.clientWidth-24) * scale + 'px';
+          $('[data-image-scale="out"]',dialog).disabled = scale <= 1;
+          $('[data-image-scale="in"]',dialog).disabled = scale >= 4;
+        }
+        image.onload = resize; image.src = original.currentSrc || original.src;
+        $all('[data-image-scale]', dialog).forEach(function (button) {button.addEventListener('click',function () {
+          scale = button.dataset.imageScale === 'fit' ? 1 : Math.max(1,Math.min(4,scale+(button.dataset.imageScale === 'in' ? .5 : -.5)));resize();
+        });});
+        $('[data-image-close]',dialog).addEventListener('click',closePracticeZoom);
+        dialog.addEventListener('cancel',function (e) {e.preventDefault();closePracticeZoom();});
+        dialog.addEventListener('keydown',function (e) {if(e.key==='Escape'){e.preventDefault();closePracticeZoom();}});
+        if (dialog.showModal) dialog.showModal(); else dialog.setAttribute('open','');
+        resize(); $('[data-image-close]',dialog).focus({preventScroll:true});
+      }
+      original.addEventListener('click',open);original.addEventListener('keydown',open);
+    });
   }
 
   function questionContentHtml(it) {
@@ -1634,7 +1832,7 @@
           '><figcaption>' + text(f.alt || '') + '</figcaption></figure>';
       }).join('') : '') +
       (it.kind === 'mc' && Array.isArray(it.options) ? '<ol class="q-options" type="A" aria-label="選項內容">' +
-        it.options.map(function (option) { return '<li>' + text(option) + '</li>'; }).join('') + '</ol>' : '') + '</div>';
+        it.options.map(function (option, i) { return '<li tabindex="0" role="button" data-option-letter="' + 'ABCD'[i] + '" aria-pressed="false">' + text(option) + '</li>'; }).join('') + '</ol>' : '') + '</div>';
   }
 
   function questionAnswerFields(item) {
@@ -1745,12 +1943,12 @@
         '<label class="paper-lbl"><input type="checkbox" class="paper-chk" data-id="' + esc(it.id) + '"' +
           (draft.paper[it.id] ? ' checked' : '') + '> 我已喺紙上寫完</label>';
     }
-    return '<article class="sq" data-id="' + esc(it.id) + '" data-kind="' + it.kind + '" aria-label="第 ' + (idx + 1) + ' 題"' + (mcOnly && it.kind === 'sub' ? ' hidden' : '') + '>' + head + body + '</article>';
+    return '<article class="sq" id="question-' + esc(it.id) + '" data-id="' + esc(it.id) + '" data-kind="' + it.kind + '" aria-label="第 ' + (idx + 1) + ' 題"' + (mcOnly && it.kind === 'sub' ? ' hidden' : '') + '>' + head + body + '</article>';
   }
 
   function bindSession(code, topic, dkey, renderItems, initialActive, mcOnly) {
     var activeItems = initialActive;
-    var draft = drafts[dkey] || { pick: {}, text: {}, paper: {}, steps: {}, changedAt: {}, deletedAt: 0 };
+    var draft = mergeDraft({}, drafts[dkey]);
     draft.steps = draft.steps || {};
     function persist(kind, id) {
       var value = draft[kind][id];
@@ -1760,16 +1958,23 @@
       var key = kind + ':' + id;
       draft.changedAt[key] = Math.max(Date.now(), Number(draft.changedAt[key]) + 1 || 0, Number(draft.deletedAt) + 1 || 0);
       drafts[dkey] = draft; save(); updateAnswered();
+      rememberTask(code, dkey, activeItems);
+      var status = $('#draftSaveStatus');
+      if (status) status.textContent = '答案已保存在本機' + (localStorage.getItem(LS_SYNC_SESSION) ? '，等待自動同步。' : '；登入後可同步到其他裝置。');
     }
     function answeredCount() {
-      return activeItems.filter(function (it) {
-        if (it.kind === 'mc') return !!draft.pick[it.id];
-        return (draft.text[it.id] && draft.text[it.id].trim()) || draft.paper[it.id];
-      }).length;
+      return activeItems.filter(function (it) { return study.answered(it, draft); }).length;
     }
     function updateAnswered() {
       $('#answeredCount').textContent = answeredCount();
       $('#totalCount').textContent = activeItems.length;
+      var partial = $('#submitAnsweredBtn');
+      if (partial) { partial.disabled = answeredCount() === 0; partial.textContent = '只提交已完成的 ' + answeredCount() + ' 題'; }
+      $all('[data-jump-question]').forEach(function (link) {
+        var item = activeItems.filter(function (it) { return it.id === link.dataset.jumpQuestion; })[0];
+        link.classList.toggle('is-answered', !!item && study.answered(item, draft));
+        link.hidden = !item;
+      });
     }
     function submitLabel() {
       var nMc = activeItems.filter(function (it) { return it.kind === 'mc'; }).length;
@@ -1778,20 +1983,21 @@
         : '<span class="persona-icon persona-icon-success" aria-hidden="true"></span> 全部做完，一次過提交';
     }
     updateAnswered(); submitLabel();
+    $all('[data-jump-question]').forEach(function (link) { link.addEventListener('click', function (event) {
+      event.preventDefault();
+      var question = $('.sq[data-id="' + link.dataset.jumpQuestion + '"]');
+      if (question) question.scrollIntoView({behavior: motionBehavior(), block: 'start'});
+    }); });
     bindStepAnswers($('#qPaper'), draft, renderItems, function (id, state, answer) {
       draft.steps[id] = state; draft.text[id] = answer;
       persist('text', id); persist('steps', id);
     });
 
-    // 隨機十題「換一組」：清走之前未提交嘅隨機草稿，重新抽題打亂
+    // A reroll must never discard a half-written task.
     var rerollBtn = $('#rerollBtn');
     if (rerollBtn) {
       rerollBtn.addEventListener('click', function () {
-        var pfx = code + ':__random__';
-        Object.keys(drafts).forEach(function (k) {
-          if (k.indexOf(pfx) === 0) deleteDraft(k);
-        });
-        save();
+        if (answeredCount() && !confirm('換一組新題？目前作答會保留在草稿，可從主頁繼續。')) return;
         renderSession(code, topic, sessState.mcOnly, sessState.year);
         toast('已換一組新題');
       });
@@ -1799,6 +2005,7 @@
 
     // 「只做選擇題」開關：課題頁就地動畫收起/展開；隨機頁重新抽 MC
     $('#mcOnlyChk').addEventListener('change', function () {
+      if (reviewState) { this.checked = sessState.mcOnly; return; }
       var mc = this.checked;
       sessState.mcOnly = mc;
       if (topic === '__random__') { renderSession(code, topic, mc, sessState.year); return; }
@@ -1819,6 +2026,7 @@
         oldNote.remove();
       }
       updateAnswered(); submitLabel();
+      rememberTask(code, dkey, activeItems);
     });
 
     $all('.opts', $('#app')).forEach(function (box) {
@@ -1831,8 +2039,23 @@
           x.classList.toggle('picked', x.dataset.l === draft.pick[id]);
           x.setAttribute('aria-pressed', String(x.dataset.l === draft.pick[id]));
         });
+        var question = box.closest && box.closest('.sq');
+        if (question) $all('[data-option-letter]', question).forEach(function (x) {
+          x.setAttribute('aria-pressed', String(x.dataset.optionLetter === draft.pick[id]));
+        });
         persist('pick', id);
       });
+    });
+    $all('[data-option-letter]', $('#app')).forEach(function (row) {
+      function choose(event) {
+        if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        var question = row.closest('.sq'), button = $('.opt[data-l="' + row.dataset.optionLetter + '"]', question);
+        if (button && !button.disabled) button.click();
+      }
+      row.addEventListener('click', choose); row.addEventListener('keydown', choose);
+      var question = row.closest('.sq');
+      row.setAttribute('aria-pressed', String(draft.pick[question.dataset.id] === row.dataset.optionLetter));
     });
     $all('.ans-box', $('#app')).forEach(function (ta) {
       ta.addEventListener('input', function () { draft.text[ta.dataset.id] = ta.value; persist('text', ta.dataset.id); });
@@ -1843,10 +2066,7 @@
 
     $('#submitBtn').addEventListener('click', function () {
       if (reviewState) return;
-      var miss = activeItems.filter(function (it) {
-        if (it.kind === 'mc') return !draft.pick[it.id];
-        return !((draft.text[it.id] && draft.text[it.id].trim()) || draft.paper[it.id]);
-      });
+      var miss = activeItems.filter(function (it) { return !study.answered(it, draft); });
       if (miss.length) {
         toast(sessState.mcOnly
           ? '仲有 ' + miss.length + ' 題 MC 未揀'
@@ -1857,13 +2077,24 @@
       }
       submitSession(code, topic, dkey, activeItems, draft, sessState.mcOnly);
     });
+    $('#submitAnsweredBtn').addEventListener('click', function () {
+      if (reviewState) return;
+      var completed = activeItems.filter(function (it) { return study.answered(it, draft); });
+      if (!completed.length) { toast('先完成一道題就可以提交。'); return; }
+      submitSession(code, topic, dkey, completed, draft, completed.every(function (it) {return it.kind === 'mc';}));
+    });
   }
 
   /* ---------- 提交批改 ---------- */
-  function submitSession(code, topic, dkey, items, draft, mcOnly) {
+  function submitSession(code, topic, dkey, items, draft, mcOnly, restoredScores) {
     // Keep the exact submitted text separate from later draft cleanup and sync.
     draft = JSON.parse(JSON.stringify(draft));
+    var pending = { dkey: dkey, ids: items.map(function (it) {return it.id;}), draft: draft, mcOnly: mcOnly, scores: restoredScores || {}, versions: {} };
+    items.forEach(function (it) {pending.versions[it.id] = pendingVersion(it);});
+    localStorage.setItem(LS_PENDING, JSON.stringify(pending));
     reviewState = { results: {} };
+    $('#mcOnlyChk').disabled = true;
+    $('#submitBtn').disabled = true; $('#submitAnsweredBtn').disabled = true;
     $all('input,textarea,button', $('#qPaper')).forEach(function(control){control.disabled=true;});
     var submitted = false;
     var mcFull = 0, mcMarks = 0, subFull = 0;
@@ -1928,11 +2159,17 @@
 
     html += '<div class="rp-actions">' +
       '<button class="btn btn-primary btn-lg" id="saveSessionBtn" type="button"><span class="persona-icon persona-icon-papers" aria-hidden="true"></span> '+(mcOnly?'儲存做題記錄':'確認自評並儲存練習記錄')+'</button>' +
-      '<a class="btn btn-ghost" href="' + practiceHref(code, sessState.year) + '">返課題列表</a></div>';
+      '<a class="btn btn-ghost" href="' + esc(sessState.back || practiceHref(code, sessState.year)) + '">返回原來的複習位置</a></div>';
 
     var panel = $('#resultPanel');
     panel.hidden = false;
     panel.innerHTML = html;
+    $all('.chk-form', panel).forEach(function (f) {
+      var score = (restoredScores || {})[f.dataset.id];
+      if (!score) return;
+      $all('input[type="checkbox"]', f).forEach(function (cb) { cb.checked = (score.checkedIndices || []).indexOf(Number(cb.dataset.i)) >= 0; });
+      var manual = $('.manual-score', f); if (manual && score.marks != null) manual.value = score.marks;
+    });
     bindAIPanels(panel, items);
     panel.scrollIntoView({ behavior: motionBehavior(), block: 'start' });
 
@@ -1946,22 +2183,25 @@
         checkedIndices: selected, assisted: !!((draft.steps || {})[it.id] || {}).assisted };
     }
     function recalcSub() {
-      var got = 0, pending = false;
+      var got = 0, hasPending = false;
       $all('.chk-form', panel).forEach(function (f) {
         var it = items.filter(function (item) { return item.id === f.dataset.id; })[0];
         var result = subResult(it, f);
         $('.chk-got', f).textContent = result.got;
         $('.chk-score', f).textContent = result.marks == null ? '待確認' : result.marks;
         reviewState.results[it.id] = result;
-        pending = pending || result.marks == null; got += result.marks || 0;
+        pending.scores[it.id] = result;
+        hasPending = hasPending || result.marks == null; got += result.marks || 0;
       });
-      $('#subScore').textContent = pending ? '待確認 / ' + subFull : got + ' / ' + subFull;
-      $('#allScore').textContent = pending ? '待確認' : (mcMarks + got) + ' / ' + (mcFull + subFull);
+      $('#subScore').textContent = hasPending ? '待確認 / ' + subFull : got + ' / ' + subFull;
+      $('#allScore').textContent = hasPending ? '待確認' : (mcMarks + got) + ' / ' + (mcFull + subFull);
+      localStorage.setItem(LS_PENDING, JSON.stringify(pending));
     }
     $all('.chk-form input', panel).forEach(function (cb) {
       cb.addEventListener('change', recalcSub);
       if (cb.type === 'number') cb.addEventListener('input', recalcSub);
     });
+    if (restoredScores && Object.keys(restoredScores).length) recalcSub();
 
     $('#saveSessionBtn').addEventListener('click', function () {
       if (submitted) return;
@@ -1983,6 +2223,11 @@
         return s + (r.kind === 'sub' ? r.marks : 0);
       }, 0);
       var savedAt = Date.now();
+      var previousHistory = window.DSELibrary.indexHistory(allSessions());
+      var improved = items.filter(function (it) {
+        var before = previousHistory[it.id], last = before && before.history[before.history.length - 1], result = reviewState.results[it.id];
+        return last && last.tot === result.tot && result.marks > last.marks;
+      }).length;
       items.forEach(function (it) {
         var result = reviewState.results[it.id];
         updateReviewPlan(it.id, result, savedAt);
@@ -1992,27 +2237,42 @@
       });
       sessions.push({
         t: savedAt, subj: code, topic: topic, mcOnly: !!mcOnly,
+        questionIds: items.map(function (it) {return it.id;}),
         results: JSON.parse(JSON.stringify(reviewState.results)),
         mc: mcMarks + '/' + mcFull, sub: mcOnly ? null : (subGotFinal + '/' + subFull)
       });
-      if (topic !== '__random__' && (mcOnly || sessState.year)) {
-        // 按年份提交只清本次題目，保留其他年份與未提交的大題草稿。
+      {
+        // Clear exactly the submitted answers; every unfinished answer survives.
+        var submittedDraft = draft;
         draft = mergeDraft(drafts[dkey], draft);
         items.forEach(function (it) {
           (it.kind === 'mc' ? ['pick'] : ['text', 'paper', 'steps']).forEach(function (kind) {
             draft[kind] = draft[kind] || {};
+            var key = kind + ':' + it.id;
+            // Another device can edit this answer while the old snapshot is graded.
+            // A newer field belongs to that unfinished attempt, not this submission.
+            var submittedStamp = Number((submittedDraft.changedAt || {})[key]) || 0;
+            var currentStamp = Number((draft.changedAt || {})[key]) || 0;
+            if (currentStamp > submittedStamp || stableStringify(draft[kind][it.id]) !== stableStringify((submittedDraft[kind] || {})[it.id])) return;
             draft[kind][it.id] = kind === 'paper' ? false : '';
             draft.changedAt = draft.changedAt || {};
-            var key = kind + ':' + it.id;
             draft.changedAt[key] = Math.max(Date.now(), Number(draft.changedAt[key]) + 1 || 0);
           });
         });
         if (!Object.values(draft.pick).some(Boolean) &&
             !Object.values(draft.text).some(Boolean) && !Object.values(draft.paper).some(Boolean)) deleteDraft(dkey);
         else drafts[dkey] = draft;
-      } else {
-        deleteDraft(dkey);
       }
+      localStorage.removeItem(LS_PENDING);
+      var remaining = currentTask && currentTask.dkey === dkey ? currentTask.ids.filter(function (id) {
+        var item = itemsOf(code).filter(function (it) {return it.id === id;})[0];
+        return !reviewState.results[id] || item && study.answered(item, drafts[dkey]);
+      }) : [];
+      var resumeRemaining = remaining.length ? study.drillHref(code, remaining, sessState.back, dkey) : '';
+      if (resumeRemaining) {
+        currentTask.ids = remaining; currentTask.href = resumeRemaining; currentTask.remaining = true;
+        localStorage.setItem(LS_TASK, JSON.stringify(currentTask));
+      } else { currentTask = null; localStorage.removeItem(LS_TASK); }
       save();
       if (topic === '__today__') localStorage.removeItem(LS_TODAY);
       var totalGot = mcMarks + (mcOnly ? 0 : subGotFinal);
@@ -2021,7 +2281,7 @@
       panel.innerHTML =
         '<div class="saved-card">' +
           '<div class="saved-icon"><span class="persona-icon persona-icon-celebrate" aria-hidden="true"></span></div>' +
-          '<h2>已存入做題記錄</h2>' +
+          '<h2>已存入做題記錄</h2><p>本次完成 ' + items.length + ' 題。' + (improved ? '其中 ' + improved + ' 題比上次取得更多得分。' : '這一步已經留下來，可以安心在這裡結束。') + '</p>' +
           '<div class="saved-score">' + totalGot + ' / ' + totalFull +
             ' 分（' + pct + '%）</div>' +
           '<div class="saved-sub">' + (mcOnly
@@ -2032,8 +2292,13 @@
               var subject = SUBJECT_ORDER.filter(function (c) { return itemsOf(c).some(function (q) { return q.id === it.id; }); })[0];
               return '<p><a href="#/library/books/' + subject + '/' + encodeURIComponent(it.topic) + '">' + esc(SUBJECT_META[subject].name + ' · ' + it.qref) + ' → 查看錯因與解析</a></p>';
             }).join('') || '<p>本次全部答對，可按下一次間隔繼續鞏固。</p>') + '<a class="btn btn-primary" href="#/">返回今日複習</a></div>' : '') +
-          '<div class="rp-actions"><a class="btn btn-primary" href="#/records"><span class="persona-icon persona-icon-records" aria-hidden="true"></span> 睇記錄</a>' +
-          '<a class="btn btn-ghost" href="' + practiceHref(code, sessState.year) + '">繼續練習 →</a></div>' +
+          '<div class="saved-review-links">' + items.map(function (it) {
+            var subject = SUBJECT_ORDER.filter(function (c) {return itemsOf(c).some(function (q) {return q.id === it.id;});})[0];
+            return '<a href="#/library/books/question/' + subject + '/' + encodeURIComponent(it.id) + '">' + esc(it.qref) + ' · 查看原答與本次變化</a>';
+          }).join('') + '</div>' +
+          '<div class="rp-actions"><a class="btn btn-primary" id="finishStudy" href="' + esc(sessState.back || '#/') + '">結束本次／返回原處</a>' +
+          (resumeRemaining ? '<a class="btn btn-ghost" id="resumeRemaining" href="' + esc(resumeRemaining) + '">繼續其餘 ' + remaining.length + ' 題</a>' : '') +
+          '<a class="btn btn-ghost" href="#/records">查看學習記錄</a></div>' +
         '</div>';
       panel.scrollIntoView({ behavior: motionBehavior(), block: 'center' });
       toast('記錄已儲存 ✔');
@@ -2327,7 +2592,7 @@
         var meta = SUBJECT_META[s.subj], name = meta ? meta.name : '未分類';
         return '<details class="session-entry" data-in-cycle="' + (s.t >= cycleStartOf(Date.now())) + '"><summary>' +
           '<time>' + esc(fmtDateTime(s.t)) + '</time><span class="session-entry-title">' + esc(name + ' · ' +
-          (s.topic === '__random__' ? '隨機十題' : s.topic === '__today__' ? '今日複習' : s.topic + ' ' + topicName(s.subj, s.topic))) +
+          (s.topic === '__random__' ? '隨機十題' : s.topic === '__today__' ? '今日複習' : s.topic === '__drill__' ? '定向重做' : s.topic + ' ' + topicName(s.subj, s.topic))) +
           '<small>已提交' + (s.mcOnly ? ' · 只做選擇題' : '') + ' · 展開詳情</small></span>' +
           '<span class="session-entry-score">' + correct + ' / ' + ids.length + '</span></summary>' +
           '<div class="session-entry-body">本次全對 ' + correct + ' 題；尚未全對 ' + (ids.length - correct) + ' 題。' +
@@ -2342,7 +2607,7 @@
               '</p></details>';
           }).join('') +
           '<div><a href="#/library/books/' + esc(s.subj) + '">查看錯題歸納</a>' +
-          '<a href="#/session/' + esc(s.subj) + '/' + encodeURIComponent(s.topic) + '">再練一次</a></div></div></details>';
+          '<a href="' + esc(study.drillHref(s.subj, ids, '#/records')) + '">只重做這次的題目</a></div></div></details>';
       }).join('') || '<p class="review-note">尚未有已提交的練習；閱讀和草稿不計作答。</p>') + '</div>' +
       '<p id="historyEmpty" class="review-note" hidden>本雙周尚未有已提交的練習。</p></div>';
   }
@@ -2373,7 +2638,7 @@
     });
 
     $('#app').innerHTML =
-      '<section class="page">' +
+      '<section class="page records-page">' +
         '<header class="page-head"><div><h1 class="page-title"><span class="persona-icon persona-icon-records" aria-hidden="true"></span> 做題記錄</h1>' +
         '<p class="page-sub">每完成一次課題練習就留一個印；滑鼠移上去睇詳情。</p></div>' +
           '<div class="record-tools"><button class="btn btn-ghost" id="exportDataBtn" type="button">⬇️ 匯出記錄</button>' +
@@ -2406,7 +2671,7 @@
         '<span class="lv lv2"></span><span class="lv lv3"></span><span class="lv lv4"></span> 多（佔題庫比例）</div></div>' +
 
         '<div class="panel"><div class="panel-h-row"><h2 class="panel-h">⏰ 間隔複習（到期優先）</h2></div>' +
-          '<p class="review-note">答對後依次隔 15、21、30、45、60 日重練；未滿分亦至少隔 15 日再試。複習進度會跨雙週保留。</p>' +
+          '<p class="review-note">獨立答對後依次隔 15、21、30、45、60 日鞏固；新提交的未滿分題約 2 日後再檢驗。可以提前自主練習，短期重複全對不會冒充長期掌握。複習進度跨雙周保留。</p>' +
           '<div class="wrong-list" id="reviewDueList"></div></div>' +
 
         '<div class="panel"><div class="panel-h-row"><h2 class="panel-h"><span class="persona-icon persona-icon-sync" aria-hidden="true"></span> 錯題複習狀態（仍錯在上、已通過嘅沉底）</h2>' +
@@ -2775,6 +3040,8 @@
         localStorage.removeItem(LS_DRAFT);
         localStorage.removeItem(LS_REVIEW);
         localStorage.removeItem(LS_AI); localStorage.removeItem(LS_TODAY);
+        localStorage.removeItem(LS_PENDING); localStorage.removeItem(LS_TASK);
+        currentTask = null; drillSelection = null;
         aiReviews = {}; todaySelection = null;
         sessions = []; archive = []; drafts = {}; reviewPlan = {};
         if (localStorage.getItem(LS_SYNC_SESSION) && SYNC_API) {
@@ -2787,7 +3054,8 @@
     }
   });
 
-  history.replaceState(null, '', location.pathname + location.search + '#/');
+  var isAuthCallback = /[?&](?:handoff|sync)=/.test(startupHash);
+  history.replaceState(null, '', location.pathname + location.search + (isAuthCallback ? '#/' : study.safeRoute(startupHash)));
   seedReviewPlan();
   normalizeReviewPlan();
   if (ensureCycle()) {

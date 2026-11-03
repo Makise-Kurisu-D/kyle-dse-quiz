@@ -87,11 +87,11 @@
   }
   function routeLabel() {
     var part = location.hash.replace(/^#\/?/, '').split('/')[0];
-    var title = { practice: ['TOPICS', '課題練習'], session: ['STUDY', '專注練習'], records: ['RECORDS', '練習記錄'],
+    var title = { practice: ['TOPICS', '課題練習'], session: ['STUDY', '專注練習'], today: ['STUDY', '今日複習'], drill: ['STUDY', '定向重做'], records: ['RECORDS', '練習記錄'],
       random: ['RANDOM', '隨機十題'], library: location.hash.indexOf('/papers') >= 0 ? ['PAPERS', '紅筆批改卷'] : ['ARCHIVE', '錯題庫與歸納'] }[part] || ['HOME', '學習主頁'];
     var heading = document.getElementById('shellHeading');
     if (heading) { heading.querySelector('b').textContent = title[0]; heading.querySelector('span').textContent = title[1]; }
-    document.body.dataset.view = part || 'home';
+    document.body.dataset.view = ['today','drill'].indexOf(part) >= 0 ? 'session' : part || 'home';
     document.body.dataset.library = part === 'library' ? location.hash.split('?')[0].split('/')[2] || '' : '';
     document.querySelectorAll('.rail-item[data-route],.tab-item[data-route]').forEach(function (link) {
       var active = link.dataset.route === (part === 'library' && location.hash.indexOf('/papers') >= 0 ? 'papers' : part || 'home');
