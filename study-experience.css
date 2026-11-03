@@ -41,11 +41,15 @@ html[data-appearance=full] body[data-view=session] .q-stem{max-width:82ch}
 html[data-appearance=full][data-theme=day] :is(.paper-review-panel,.question-jump a){border-radius:0}
 html[data-theme=night] .paper-zoom{border-radius:16px}
 @media(max-width:860px){
- html[data-appearance=full] body[data-view=home] .home-stage .hero{order:1;padding:20px 0 18px;align-self:stretch;max-width:none}
- html[data-appearance=full] body[data-view=home] .home-stage .tile-grid{order:0}
+ html[data-appearance=full] body[data-view=home] .home-stage .hero{order:0;padding:8px 0 12px;align-self:stretch;max-width:none}
+ html[data-appearance=full] body[data-view=home] .home-stage .tile-grid{order:1}
  html[data-appearance=full] body[data-view=home] .home-stage .hero-title{margin:8px 0 18px}
  html[data-appearance=full] body[data-view=home] .hero-en{font-size:54px}
  html[data-appearance=full] body[data-view=home] .preview-due strong{font-size:60px}
+ html[data-appearance=full] body[data-view=home] .preview-today-label{padding-top:8px;margin-bottom:4px}
+ html[data-appearance=full] body[data-view=home] .preview-due{margin-bottom:10px}
+ html[data-appearance=full] body[data-view=home] .preview-review-hint{margin:0 0 8px}
+ html[data-appearance=full] body[data-view=home] .continue-command{margin:0;min-height:48px}
  html[data-appearance=full] body[data-view=home] .home-info{margin-top:16px}
  .home-quick-links{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;width:100%}
  .home-quick-links .btn{min-width:0;min-height:44px;padding:8px 3px;font-size:12px;white-space:nowrap}
