@@ -44,3 +44,13 @@ html[data-appearance=full][data-theme=night] body[data-view=home] .tile-grid {
   border:0;border-radius:18px;padding:18px 16px 20px;
  }
 }
+/* A screen-wide shade echoes the day scene while leaving the pink artwork visible. */
+html[data-appearance=full][data-theme=night] body[data-view=home] .visual-world::after {
+ display:block;
+ background:linear-gradient(90deg,rgba(14,4,12,.82) 0%,rgba(20,5,14,.57) 55%,rgba(18,4,12,.28) 100%);
+ pointer-events:none;
+}
+html[data-appearance=full][data-theme=night] body[data-view=home] .tile-grid {background:transparent}
+@media(max-width:860px){
+ html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage .hero {background:transparent}
+}
