@@ -1,0 +1,46 @@
+/* Full night theme: preserve readable answer states and the existing pink artwork. */
+html[data-appearance=full][data-theme=night] {
+  --night-ink:#42112f; --night-pale:#fff0f7; --night-light:#ffc5df;
+  --night-hot:#f28ab8; --night-dark:#42152f; --night-shadow:#8e245b;
+}
+html[data-appearance=full][data-theme=night] .version-switch button[aria-pressed=true] {
+  background:var(--night-pale); color:var(--night-ink);
+}
+html[data-appearance=full][data-theme=night] .compact-nav nav :is(a,button):is(:hover,:focus-visible) {
+  background:var(--night-pale); color:var(--night-ink); border-radius:10px;
+}
+html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage .tile-title {text-shadow:4px 4px 0 #702046}
+html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage .tile:is(:hover,:focus-visible) :is(.tile-en,.tile-cn,.tile-desc,.tile-arrow) {color:var(--night-ink)}
+html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage .tile:is(:hover,:focus-visible) {outline-color:var(--night-light)}
+html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage .tile-title .tile-cn,
+html[data-appearance=full][data-theme=night] body[data-view=home] :is(.tile-desc,.tile-arrow,.hero-kicker,.preview-today-label,.preview-due small) {color:var(--night-light)}
+html[data-appearance=full][data-theme=night] body[data-view=home] .continue-command {background:var(--night-pale);color:var(--night-ink);border-color:var(--night-hot);box-shadow:6px 6px var(--night-shadow);transform:none;border-radius:16px}
+html[data-appearance=full][data-theme=night] body[data-view=home] .continue-command b {color:#9b215b}
+html[data-appearance=full][data-theme=night] body[data-view=home] .continue-command:is(:hover,:focus-visible) {box-shadow:9px 8px var(--night-shadow);outline-color:var(--night-light);transform:translateX(7px)}
+html[data-appearance=full][data-theme=night] body[data-view=home] .preview-review-hint {color:#fff0f7;text-shadow:0 1px 3px #571331}
+html[data-appearance=full][data-theme=night] body:not([data-view=home]) .page-title {text-shadow:4px 4px 0 #8e245b}
+html[data-appearance=full][data-theme=night] body:not([data-view=home]) .page-sub {color:#fff4fa;text-shadow:0 1px 3px #51132f}
+html[data-appearance=full][data-theme=night] body:not([data-view=home]) .page-head .btn-ghost {background:var(--night-pale);color:var(--night-ink);border-radius:12px}
+html[data-appearance=full][data-theme=night] body:not([data-view=home]) .page-head .btn-ghost:is(:hover,:focus-visible) {background:var(--night-light);color:var(--night-ink)}
+html[data-appearance=full][data-theme=night] body:not([data-view=home]) :is(.ml-subject,.ml-topic,.library-hub-card,.paper-subject,.paper-year,.sq,.rq,.ml-question,.panel,.stat-card,.rec-card,.saved-card,.rp-head,.topic-card,.ml-filters,.ml-summary,.soon-banner) {box-shadow:5px 5px 0 #68183e55;border-radius:14px}
+html[data-appearance=full][data-theme=night] body[data-view=practice] :is(.inventory-year,.practice-topic) {box-shadow:5px 5px 0 #781d4955;border-radius:14px}
+html[data-appearance=full][data-theme=night] body[data-view=session] :is(.sq,.rq) {box-shadow:5px 5px 0 #68183e55;border-left-color:var(--night-hot)}
+html[data-appearance=full][data-theme=night] body[data-view=session] .submit-bar {background:#35162bf2;border-radius:14px}
+html[data-appearance=full][data-theme=night] :is(input,textarea,select):focus-visible {outline-color:var(--night-light);box-shadow:0 0 0 5px var(--card),0 0 0 7px var(--night-light)}
+@media (prefers-reduced-motion:reduce) {html[data-appearance=full][data-theme=night] :is(.tile,.continue-command){animation:none;transition:none}}
+/* The character artwork contains white areas; give the menu a local contrast wash. */
+html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage::before,
+html[data-appearance=full][data-theme=night] body[data-view=home] .tile-grid::before {color:#ffe1ee;text-shadow:0 1px 5px #4c102f}
+html[data-appearance=full][data-theme=night] body[data-view=home] .tile-grid {
+  background:linear-gradient(90deg,rgba(65,12,45,.84),rgba(100,18,58,.66) 65%,transparent);
+  border-radius:22px;
+}
+@media(max-width:860px){
+ html[data-appearance=full][data-theme=night] body[data-view=home] .tile-grid {background:linear-gradient(90deg,rgba(65,12,45,.85),rgba(100,18,58,.58));padding:18px 10px;border-radius:18px}
+}
+@media(max-width:860px){
+ html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage .hero {
+  background:linear-gradient(110deg,rgba(62,12,43,.88),rgba(94,17,53,.72) 70%,rgba(94,17,53,.48));
+  border:0;border-radius:18px;padding:18px 16px 20px;
+ }
+}
