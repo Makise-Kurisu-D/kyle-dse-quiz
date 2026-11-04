@@ -13,21 +13,23 @@
 <a class="back" href="./#/">← 返回錯題本</a>
 <p class="eyebrow">DSE / HOME SCREEN</p>
 <h1>把複習放在<br>主畫面。</h1>
-<p>一眼看到北京日期，從主畫面打開錯題本。小號進入今日複習主頁；中號還可直接打開概念、批改卷和學習記錄。</p>
-<div class="card"><strong>開始之前</strong><p>這是由免費的 Scriptable App 承載的 iOS 小組件，適用於 Kyle 與 Yeelam。小組件不讀取或儲存帳號、密碼及私人學習資料；進入網站後按原有方式登入。</p></div>
+<p>直接查看三科原卷平均得分率、各卷參考 Level、題庫錯題數與下次雙週重算時間。點擊小組件可開啟錯題本。</p>
+<div class="card"><strong>開始之前</strong><p>這是由免費的 Scriptable App 承載的 iOS 小組件，適用於 Kyle 與 Yeelam。需在 Scriptable 內登入網站帳號以讀取私人資料。密碼只用於本次登入；登入會話儲存在 iPhone 鑰匙圈，不會公開在腳本中。主畫面上會顯示你的學習資料。</p></div>
 <h2>安裝一次</h2>
 <ol>
 <li>在 iPhone 安裝 <a href="https://apps.apple.com/app/scriptable/id1405459188">Scriptable</a>，然後回到此頁。</li>
 <li>按下「複製小組件程式」。打開 Scriptable，按右上角 <strong>＋</strong> 建立腳本，貼上程式，將名稱改為 <strong>DSE 錯題本</strong>，按完成儲存。</li>
-<li>在 iPhone 主畫面長按空白處，按「編輯」→「加入小組件」（部分 iOS 版本直接按「＋」），搜尋 <strong>Scriptable</strong>，選擇小號或中號並加入。</li>
+<li>在 Scriptable 執行 <strong>DSE 錯題本</strong>，輸入自己的網站帳號和密碼，完成首次登入。</li>
+<li>在 iPhone 主畫面長按空白處，按「編輯」→「加入小組件」（部分 iOS 版本直接按「＋」），搜尋 <strong>Scriptable</strong>，選擇中號或大號並加入。</li>
 <li>長按新小組件，點「編輯小組件」，在 <strong>Script</strong> 選擇 <strong>DSE 錯題本</strong>。點空白處完成，然後點小組件打開網站。</li>
 </ol>
 <div class="actions"><button type="button" id="copy">複製小組件程式</button><a class="button secondary" href="https://apps.apple.com/app/scriptable/id1405459188">取得 Scriptable ↗</a></div>
 <p id="status" role="status" aria-live="polite">正在準備程式…</p>
 <details><summary>無法自動複製？手動全選程式</summary><p>長按下方文字，選擇「全選」再複製。</p><textarea id="code" readonly aria-label="小組件程式"></textarea><p><a href="./ios-widget.js">開啟程式原始碼</a></p></details>
 <h2>使用提示</h2>
-<p>小號整個區域打開網站主頁；中號右側三個入口可分別點按。首次開啟或登入過期時，先在網頁登入自己的帳號。網站會使用打開它的瀏覽器的登入狀態；如果之前只在「加入主畫面」的獨立網頁登入，瀏覽器可能需要再登入一次。</p>
-<p>小組件不顯示待複習數字，因為它無法直接讀取網頁的私人登入狀態；實際進度以網站為準。日期和日夜配色按北京時間顯示，iOS 決定實際刷新時間，跨日後可能稍有延遲。</p>
+<p>點擊小組件可開啟網站。小組件與瀏覽器分別登入；會話過期時，請在 Scriptable 重新執行腳本登入。切換帳號或退出也在 Scriptable 中操作。</p>
+<p>平均分按每份有有效成績的原卷得分百分比等權計算。每卷 LV 使用該卷參考分界，屬非官方估算；欠缺分界顯示「—」。錯題數為題庫收錄總數；雙週時間按北京時間。中號空間有限，較多試卷的 Level 可能被截斷，可點入網站查看完整資料。</p>
+<p>iOS 決定實際刷新時間；無法連線時會顯示提示，不把舊資料當作最新資料。</p>
 <small>更新程式時，可重新複製並覆蓋 Scriptable 中的原腳本。</small>
 </main>
 <script>
