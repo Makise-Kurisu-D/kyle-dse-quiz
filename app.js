@@ -840,7 +840,7 @@
           tile('#/library/papers', '<span class="persona-icon persona-icon-papers" aria-hidden="true"></span>', '紅筆批改卷', '按年份回顧原答與批注', 'tile-green') +
           tile('#/records', '<span class="persona-icon persona-icon-records" aria-hidden="true"></span>', '做題記錄', '查看歷次練習與雙周進度', 'tile-gold') +
           tile('#/random', '<span class="persona-icon persona-icon-random" aria-hidden="true"></span>', '隨機十題', SUBJECT_ORDER.map(function (code) { return SUBJECT_META[code].name; }).join('／') + '十題速測', 'tile-green') +
-        '</div><button type="button" class="home-next" aria-label="向下查看複習詳情">SCROLL <span aria-hidden="true">↓</span></button></div>' +
+        '</div></div>' +
         '<div class="home-details" id="homeDetails">' + todayMarkup() + '<div class="home-stat-strip">' +
           '<div>本輪待複習<strong class="c-red">' + (bankLoaded ? due : '—') + '<small>題</small></strong></div>' +
           '<div>本輪已全對<strong class="c-green">' + conquered + '<small>題</small></strong></div>' +
@@ -890,10 +890,6 @@
     $('#app').innerHTML = homeMarkup();
     bindBankRetry();
     startCycleTimer();
-    var next = $('.home-next'), details = $('#homeDetails');
-    if (next && details) next.addEventListener('click', function () {
-      details.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
-    });
     var subject = $('#todaySubject'), count = $('#todayCount');
     function updateToday() {
       var kind = $('#todayKind').value || (compactStudy() ? 'mc' : 'all');

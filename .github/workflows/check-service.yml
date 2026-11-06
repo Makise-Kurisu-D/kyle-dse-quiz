@@ -10,6 +10,8 @@ on:
       - 'study-experience.js'
       - 'study-experience.css'
       - 'study-experience.test.mjs'
+      - 'home-pages.css'
+      - 'home-scenes.js'
       - 'tests/experience_browser.py'
       - 'app.js'
       - 'subject-config.js'

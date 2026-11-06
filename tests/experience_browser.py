@@ -504,8 +504,135 @@ def empty(journey):
     return {"empty_bank_has_content": True}
 
 
+def home_scenes(journey):
+    page = journey.home()
+    page.emulate_media(reduced_motion="no-preference")
+    page.evaluate("if (document.documentElement.dataset.theme !== 'night') DSEAppearance.toggle()")
+    page.wait_for_timeout(900)
+    page.mouse.move(1400, 850)
+
+    def state():
+        return page.evaluate("""() => {
+          const pane=document.querySelector('#contentScroll');
+          const details=document.querySelector('#homeDetails');
+          const world=document.querySelector('#visualWorld');
+          const scene=document.querySelector('.home-scene');
+          return {top:pane.scrollTop, height:pane.clientHeight,
+            boundary:details.getBoundingClientRect().top-pane.getBoundingClientRect().top+pane.scrollTop,
+            opacity:Number(getComputedStyle(scene).opacity), shade:Number(getComputedStyle(world,'::after').opacity),
+            image:getComputedStyle(scene).backgroundImage};
+        }""")
+
+    before = state()
+    assert not page.locator('.home-next').count(), "首頁仍有 SCROLL 按鈕"
+    assert abs(before['boundary'] - before['height']) < 2 and before['opacity'] == 0, repr(before)
+    page.mouse.wheel(80, 3)
+    page.wait_for_timeout(120)
+    assert state()['top'] < 10, "水平觸控板滑動不應翻頁"
+
+    # Small, closely spaced wheel deltas reproduce a trackpad gesture rather
+    # than relying on a single large mouse-wheel notch or CSS scroll snapping.
+    for _ in range(5):
+        page.mouse.wheel(0, 6)
+        page.wait_for_timeout(25)
+    page.wait_for_timeout(100)
+    middle = state()
+    assert 0 < middle['top'] < middle['boundary'] and 0 < middle['opacity'] < 1, repr(middle)
+    for _ in range(4):
+        page.mouse.wheel(0, 4)  # residual momentum must not overshoot the page
+        page.wait_for_timeout(25)
+    page.wait_for_timeout(700)
+    second = state()
+    assert abs(second['top'] - second['boundary']) < 2 and second['opacity'] > .99, repr(second)
+    assert second['shade'] < .01 and 'archive-night.webp' in second['image'], repr(second)
+    assert page.locator('#todayCount').evaluate("""el => {
+      const event=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:-50});
+      el.dispatchEvent(event); return !event.defaultPrevented;
+    }"""), "選擇器內的滾輪不應被翻頁攔截"
+
+    page.evaluate("DSEAppearance.toggle()")
+    page.wait_for_timeout(100)
+    day = state()
+    assert day['shade'] < .01 and 'archive-day.webp' in day['image'], repr(day)
+    page.wait_for_timeout(200)
+    page.mouse.wheel(0, 55)
+    page.wait_for_timeout(160)
+    deeper = state()
+    assert deeper['top'] > deeper['boundary'] + 10, "第二頁內不能繼續滾動：" + repr(deeper)
+    page.mouse.wheel(0, -100)
+    page.wait_for_timeout(850)
+    assert state()['top'] < 2 and state()['opacity'] < .01, "向上滑動未返回第一頁：" + repr(state())
+
+    # A typical short Mac laptop viewport should still page on one gesture.
+    page.set_viewport_size({'width': 1440, 'height': 700})
+    page.wait_for_timeout(200)
+    page.mouse.move(1400, 500)
+    short_before = state()
+    assert abs(short_before['boundary'] - short_before['height']) < 2, repr(short_before)
+    page.mouse.wheel(0, 40)
+    page.wait_for_timeout(850)
+    assert abs(state()['top'] - state()['boundary']) < 2, "短窗口未能翻頁：" + repr(state())
+
+    # Reduced motion retains navigation but makes the page change immediate.
+    page.wait_for_timeout(250)
+    page.emulate_media(reduced_motion='reduce')
+    page.mouse.wheel(0, -50)
+    page.wait_for_timeout(100)
+    assert state()['top'] < 2, "減少動態效果時未即時返回"
+    page.wait_for_timeout(220)
+    page.mouse.wheel(0, 50)
+    page.wait_for_timeout(100)
+    assert abs(state()['top'] - state()['boundary']) < 2, "減少動態效果時未即時翻頁"
+
+    # Very short windows can scroll to first-scene content that does not fit.
+    page.set_viewport_size({'width': 1440, 'height': 500})
+    page.evaluate("document.querySelector('#contentScroll').scrollTop=0")
+    page.wait_for_timeout(250)
+    cramped = state()
+    assert cramped['boundary'] > cramped['height'] + 30, repr(cramped)
+    page.mouse.move(1400, 400)
+    page.mouse.wheel(0, 45)
+    page.wait_for_timeout(150)
+    assert 0 < state()['top'] < cramped['boundary'] / 2, "矮窗口應先顯示首屏其餘內容：" + repr(state())
+    page.evaluate("document.querySelector('#contentScroll').scrollTop=0; document.querySelector('#app').focus({preventScroll:true})")
+    page.keyboard.press('PageDown')
+    page.wait_for_timeout(300)
+    assert state()['top'] > 0, "鍵盤仍應能滾動主頁"
+
+    # Simplified and mobile layouts retain normal incremental scrolling.
+    page.evaluate("DSEAppearance.setView('simple'); document.querySelector('#contentScroll').scrollTop=0")
+    page.wait_for_timeout(250)
+    page.mouse.wheel(0, 80)
+    page.wait_for_timeout(160)
+    simple_top = state()['top']
+    assert 0 < simple_top < 250, "精簡版不應強制翻頁：" + repr(simple_top)
+    page.evaluate("DSEAppearance.setView('full'); document.querySelector('#contentScroll').scrollTop=0")
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.wait_for_timeout(200)
+    page.mouse.move(370, 500)
+    page.mouse.wheel(0, 80)
+    page.wait_for_timeout(160)
+    mobile_top = state()['top']
+    assert 0 < mobile_top < 250, "手機尺寸不應強制翻頁：" + repr(mobile_top)
+
+    # Leaving the home route during animation must not scroll the new page.
+    page.set_viewport_size({'width': 1440, 'height': 900})
+    page.emulate_media(reduced_motion='no-preference')
+    page.evaluate("document.querySelector('#contentScroll').scrollTop=0")
+    page.wait_for_timeout(220)
+    page.mouse.move(1400, 500)
+    page.mouse.wheel(0, 50)
+    page.wait_for_timeout(100)
+    page.evaluate("location.hash='#/records'")
+    page.wait_for_selector('#exportDataBtn')
+    page.wait_for_timeout(800)
+    assert page.locator('#contentScroll').evaluate('(el) => el.scrollTop') == 0, "換頁動畫影響了其他路由"
+    return {"trackpad_deltas": True, "second_page_scroll": True, "day_night_art": True,
+            "short_window": True, "keyboard": True, "reduced_motion": True, "simple_mobile": True, "route_cancel": True}
+
+
 SUITES = {"mobile": mobile, "desktop": desktop, "paper": paper, "storage": storage,
-          "accounts": accounts, "matrix": matrix, "empty": empty}
+          "accounts": accounts, "matrix": matrix, "empty": empty, "home_scenes": home_scenes}
 
 
 def main():
@@ -524,9 +651,9 @@ def main():
                 launch["executable_path"] = args.chromium
             browser = playwright.chromium.launch(**launch)
             for name in SUITES if args.suite == "all" else [args.suite]:
-                users = ["kyle", "yeelam"] if name == "accounts" else ["kyle"]
+                users = ["kyle", "yeelam"] if name in ("accounts", "home_scenes") else ["kyle"]
                 for account in users:
-                    journey = Journey(browser, server, name, viewport=(1440, 1000) if name in ["desktop", "storage"] else (390, 844),
+                    journey = Journey(browser, server, name, viewport=(1440, 1000) if name in ["desktop", "storage", "home_scenes"] else (390, 844),
                                       account=account, empty=name == "empty")
                     started = time.monotonic()
                     try:

@@ -1,23 +1,47 @@
-/* Two calm scenes on large screens; the content below remains ordinary scrollable content. */
-.home-next{display:none}
-@media (min-width:861px) and (min-height:760px){
- html[data-appearance=full] body[data-view=home] .content-scroll{scroll-snap-type:y mandatory;scroll-behavior:smooth}
- html[data-appearance=full] body[data-view=home] .home-stage{min-height:calc(100dvh - 60px);scroll-snap-align:start;scroll-margin-top:60px}
+/* The second scene belongs to the fixed visual world, not the scrolling cards. */
+.home-scene{display:none}
+html[data-appearance=full] body[data-view=home] .home-scene{
+ display:block;position:absolute;inset:0;pointer-events:none;
+ background:var(--archive-art) right center / auto 100% no-repeat,
+   linear-gradient(140deg,#071a4c 0%,#123b92 55%,#075abd 100%);
+ opacity:var(--home-scene-progress,0);
+ transform:translate3d(0,calc((1 - var(--home-scene-progress,0)) * 3%),0);
+}
+html[data-appearance=full][data-theme=night] body[data-view=home] .home-scene{
+ background:var(--archive-art) right center / auto 100% no-repeat,
+   linear-gradient(140deg,#35102b 0%,#79214b 55%,#b1295c 100%);
+}
+/* Keep the first scene legible without dimming the whole picture so heavily.
+   Fade its shade away with the picture, leaving the second artwork unfiltered. */
+html[data-appearance=full][data-theme=night] body[data-view=home] .visual-world::after{
+ background:linear-gradient(90deg,rgba(14,4,12,.64),rgba(20,5,14,.42) 55%,rgba(18,4,12,.18));
+ opacity:calc(1 - var(--home-scene-progress,0));
+}
+html[data-appearance=full][data-theme=day] body[data-view=home] .visual-world::after{
+ animation:none;opacity:calc((1 - var(--home-scene-progress,0)) * .82);
+}
+html[data-appearance=full] body[data-view=home] .home-details .home-sec-h .link{
+ padding:6px 10px;background:#071b44e8;color:#d9f8ff;
+}
+html[data-appearance=full][data-theme=night] body[data-view=home] .home-details .home-sec-h .link{
+ background:#43142fe8;color:#ffe2f0;border-radius:10px;
+}
+@media (min-width:861px){
+ html[data-appearance=full] body[data-view=home] .home-stage{min-height:calc(100dvh - 60px)}
  html[data-appearance=full] body[data-view=home] .home-stage .tile-grid{translate:0 -64px}
  html[data-appearance=full] body[data-view=home] .home-stage .hero{padding:20px 0}
- html[data-appearance=full] body[data-view=home] .home-next{display:flex;position:absolute;bottom:20px;left:50%;translate:-50% 0;align-items:center;gap:10px;border:0;background:transparent;color:#fff;font:800 italic 12px sans-serif;letter-spacing:.2em;cursor:pointer;padding:10px 16px;z-index:3}
- html[data-appearance=full] body[data-view=home] .home-next span{font-size:22px;line-height:1}
- html[data-appearance=full] body[data-view=home] .home-next:focus-visible{outline:2px solid #fff;outline-offset:3px}
- html[data-appearance=full] body[data-view=home] .home-details{position:relative;isolation:isolate;min-height:100dvh;scroll-snap-align:start;padding:64px 0 60px}
- html[data-appearance=full] body[data-view=home] .home-details::before{content:'';position:absolute;inset:-20px calc(-1 * clamp(30px,6vw,100px)) 0;z-index:-1;background:linear-gradient(90deg,rgba(4,15,44,.86),rgba(5,27,69,.58)),var(--archive-art) right top / cover no-repeat;pointer-events:none}
- html[data-appearance=full][data-theme=night] body[data-view=home] .home-details::before{background:linear-gradient(90deg,rgba(45,8,29,.88),rgba(72,12,40,.58)),var(--archive-art) right top / cover no-repeat}
+ html[data-appearance=full] body[data-view=home] .home-details{min-height:100dvh;padding:64px 0 60px}
 }
-@media (prefers-reduced-motion:reduce){html[data-appearance=full] body[data-view=home] .content-scroll{scroll-behavior:auto;scroll-snap-type:none}}
-/* Small screens and short windows keep natural scrolling, with the same second scene. */
-@media (max-width:860px), (max-height:759px){
- html[data-appearance=full] body[data-view=home] .home-details{position:relative;isolation:isolate;padding:32px 0}
- html[data-appearance=full] body[data-view=home] .home-details::before{content:'';position:absolute;inset:0 -20px;z-index:-1;background:linear-gradient(90deg,rgba(4,15,44,.86),rgba(5,27,69,.58)),var(--archive-art) right top / cover no-repeat;pointer-events:none}
- html[data-appearance=full][data-theme=night] body[data-view=home] .home-details::before{background:linear-gradient(90deg,rgba(45,8,29,.88),rgba(72,12,40,.58)),var(--archive-art) right top / cover no-repeat}
+@media (min-width:861px) and (max-height:760px){
+ html[data-appearance=full] body[data-view=home] .home-stage .hero{padding:0}
+ html[data-appearance=full] body[data-view=home] .home-stage .hero-title{margin:8px 0 14px}
+ html[data-appearance=full] body[data-view=home] .preview-today-label{padding-top:10px}
+ html[data-appearance=full] body[data-view=home] .preview-due{margin-bottom:12px}
+}
+@media (max-width:860px){
+ html[data-appearance=full] body[data-view=home] .home-details{padding:32px 0}
+ html[data-appearance=full] body[data-view=home] .home-scene,
+ html[data-appearance=full][data-theme=night] body[data-view=home] .home-scene{background-size:auto 65%,cover;background-position:right 12%,center}
 }
 
 /* Spacious, shared answer and original-paper marking layout. */
