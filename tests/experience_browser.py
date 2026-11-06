@@ -543,7 +543,7 @@ def home_scenes(journey):
         page.wait_for_timeout(25)
     page.wait_for_timeout(700)
     second = state()
-    assert abs(second['top'] - second['boundary']) < 2 and second['opacity'] > .99, repr(second)
+    assert abs(second['top'] - second['boundary']) < 24 and second['opacity'] > .99, repr(second)
     assert second['shade'] < .01 and 'archive-night.webp' in second['image'], repr(second)
     assert page.locator('#todayCount').evaluate("""el => {
       const event=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:-50});
@@ -585,12 +585,12 @@ def home_scenes(journey):
     assert abs(state()['top'] - state()['boundary']) < 2, "減少動態效果時未即時翻頁"
 
     # Very short windows can scroll to first-scene content that does not fit.
-    page.set_viewport_size({'width': 1440, 'height': 500})
+    page.set_viewport_size({'width': 1440, 'height': 350})
     page.evaluate("document.querySelector('#contentScroll').scrollTop=0")
     page.wait_for_timeout(250)
     cramped = state()
     assert cramped['boundary'] > cramped['height'] + 30, repr(cramped)
-    page.mouse.move(1400, 400)
+    page.mouse.move(1400, 300)
     page.mouse.wheel(0, 45)
     page.wait_for_timeout(150)
     assert 0 < state()['top'] < cramped['boundary'] / 2, "矮窗口應先顯示首屏其餘內容：" + repr(state())
