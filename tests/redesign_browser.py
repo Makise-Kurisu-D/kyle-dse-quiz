@@ -827,6 +827,7 @@ def suite_demo(j):
     """Exercise the shipped demo adapter, not the test service's synthetic API."""
     p = j.page
     assert j.demo and p.evaluate("window.QUIZ_DEMO===true")
+    assert p.evaluate("document.querySelector('#syncStatus').textContent.includes('模擬同步') && !document.querySelector('#syncStatus').textContent.includes('雲端')"), "Demo labels a local simulated save as real cloud sync"
     assert p.evaluate("Array.from(document.scripts).some(s=>new URL(s.src||location.href).pathname==='/app.js') && !Array.from(document.scripts).some(s=>s.src.includes('/demo/app.js'))"), "Demo does not use the shared root engine"
 
     def subjects(expected):

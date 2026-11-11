@@ -307,6 +307,7 @@
     syncTimer = setTimeout(function () { syncNow(true); }, 1400);
   }
   function setSyncStatus(message) {
+    if (window.QUIZ_DEMO) message = '模擬同步 · ' + String(message).replace(/已上傳至雲端/g, '已保存至本機').replace(/雲端/g, '本機模擬空間');
     syncMessage = message;
     var el = $('#syncStatus');
     if (el) { el.textContent = message; el.hidden = false; }
