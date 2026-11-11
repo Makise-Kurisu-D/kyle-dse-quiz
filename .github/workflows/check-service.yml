@@ -12,7 +12,9 @@ on:
       - 'study-experience.test.mjs'
       - 'home-pages.css'
       - 'home-scenes.js'
-      - 'tests/experience_browser.py'
+      - 'tests/redesign_browser.py'
+      - 'notebook*'
+      - 'demo/**'
       - 'app.js'
       - 'subject-config.js'
       - 'app.test.mjs'
@@ -53,15 +55,27 @@ jobs:
           python -m pip install playwright==1.55.0
           python -m playwright install --with-deps chromium
       - name: Walk the student journeys with synthetic data
-        run: python -B tests/experience_browser.py --suite all
+        run: |
+          CHROME=$(python -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); print(p.chromium.executable_path); p.stop()")
+          python -B tests/redesign_browser.py --chrome "$CHROME" --suite all --screenshots --artifacts /tmp/dse-redesign-browser
+      - name: Preserve synthetic browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: notebook-browser-evidence
+          path: /tmp/dse-redesign-browser/
+          if-no-files-found: ignore
   probe:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.event.repository.default_branch }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
       - name: Test website and Worker
         run: node --test *.test.mjs sync-worker/worker.test.mjs
       - name: Probe health and password login reachability
@@ -88,7 +102,7 @@ jobs:
             const started = Date.now();
             try {
               let response, body;
-              const attempts = probe.name === 'health' ? 5 : 1;
+              const attempts = probe.name === 'health' ? 60 : 1;
               for (let attempt = 1; attempt <= attempts; attempt++) {
                 const path = probe.path + (probe.name === 'health' ? '?probe=' + Date.now() : '');
                 response = await fetch(base + path, { ...probe.options, cache: 'no-store', signal: AbortSignal.timeout(15000) });
@@ -114,30 +128,35 @@ jobs:
           node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs';
           const base = 'https://makise-kurisu-d.github.io/kyle-dse-quiz/';
-          const index = readFileSync('index.html', 'utf8');
-          const versionedAssets = [...index.matchAll(/(?:src|href)="((?:app|library|appearance|paper-reader|subject-config|study-experience|home-scenes)\.js\?v=[^"\s]+|(?:style|library|appearance|immersive|immersive-pages|study-experience|home-pages)\.css\?v=[^"\s]+|images\/avatar\.jpg\?v=[^"\s]+)"/g)].map(m => m[1]);
-          if (versionedAssets.length !== 15) throw new Error('Missing versioned website assets or avatar favicon');
-          const visualAssets = [...readFileSync('appearance.css', 'utf8').matchAll(/url\(['"]?(visual\/[^)'"\s]+)['"]?\)/g)].map(m => m[1]);
-          for (const file of ['home-day.webp', 'home-night.webp', 'home-day-wide.webp', 'home-night-wide.webp', 'archive-day.webp', 'archive-night.webp', 'Barlow-BlackItalic.ttf']) {
-            if (!visualAssets.includes('visual/' + file)) throw new Error('Missing theme artwork or font: ' + file);
+          const assets = new Map();
+          for (const entry of ['index.html', 'demo/index.html']) {
+            const html = readFileSync(entry, 'utf8');
+            if (!html.includes('notebook.css?v=') || !html.includes('notebook.js?v=') || /(?:appearance|home-scenes)\.(?:css|js)\?v=/.test(html)) throw new Error('Not the current notebook shell: ' + entry);
+            assets.set(entry, entry);
+            const entryUrl = new URL(entry, base);
+            for (const match of html.matchAll(/(?:src|href)="([^"#]+\.(?:js|css|svg)(?:\?[^"\s]*)?)"/g)) {
+              const url = new URL(match[1], entryUrl);
+              if (url.origin !== entryUrl.origin || !url.pathname.startsWith(new URL(base).pathname)) throw new Error('Nonlocal app asset: ' + match[1]);
+              const local = decodeURIComponent(url.pathname.slice(new URL(base).pathname.length));
+              assets.set(local, local + url.search);
+            }
           }
-          const iconAssets = [...readFileSync('appearance.css', 'utf8').matchAll(/url\(['"]?(images\/persona3\/[^)'"\s]+)['"]?\)/g)].map(m => m[1]);
-          const iconSources = JSON.parse(readFileSync('images/persona3/sources.json', 'utf8'));
-          if (!iconAssets.length || !Object.keys(iconSources.assets).every(file => iconAssets.includes('images/persona3/' + file))) throw new Error('Missing Persona theme icon assets');
-          const assets = [...new Set([...versionedAssets, ...visualAssets, ...iconAssets, 'images/persona3/sources.json', 'visual/Barlow-OFL.txt'])];
+          for (const file of ['notebook.css', 'notebook.js', 'notebook-mark.svg', 'app.js', 'library.js', 'paper-reader.js', 'subject-config.js', 'study-experience.js', 'demo/demo-data.js', 'demo/demo-adapter.js']) {
+            if (!assets.has(file)) throw new Error('Missing current asset: ' + file);
+          }
           let lastError;
           for (let attempt = 1; attempt <= 60; attempt++) {
             try {
               const response = await fetch(base + '?probe=' + Date.now(), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
               const html = await response.text();
-              if (!response.ok || !versionedAssets.every(asset => html.includes(asset))) throw new Error('Homepage unavailable or awaiting current Pages release: HTTP ' + response.status);
-              await Promise.all(assets.map(async asset => {
+              if (!response.ok || html !== readFileSync('index.html', 'utf8')) throw new Error('Homepage unavailable or awaiting current Pages release: HTTP ' + response.status);
+              await Promise.all([...assets].map(async ([local, asset]) => {
                 const url = new URL(asset, base);
                 url.searchParams.set('probe', Date.now());
                 const result = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
-                if (!result.ok || !Buffer.from(await result.arrayBuffer()).equals(readFileSync(asset.split('?')[0]))) throw new Error('Published asset differs or is unavailable: ' + asset + ' HTTP ' + result.status);
+                if (!result.ok || !Buffer.from(await result.arrayBuffer()).equals(readFileSync(local))) throw new Error('Published asset differs or is unavailable: ' + asset + ' HTTP ' + result.status);
               }));
-              console.log(JSON.stringify({ probe: 'published-website', status: response.status, assets, attempt }));
+              console.log(JSON.stringify({ probe: 'published-website', status: response.status, assets: [...assets.keys()], attempt }));
               lastError = null;
               break;
             } catch (error) {

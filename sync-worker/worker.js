@@ -9,7 +9,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'study-continuity-20261102';
+const SERVICE_VERSION = 'study-notebook-20261111';
 const refreshes = new Map();
 const bankReads = new Map();
 const metadataReads = new Map();
@@ -284,9 +284,9 @@ function mergeDrafts(a = {}, b = {}) {
 
 export function mergeBackup(current, incoming) {
   if (!current || current.app !== 'kyle-dse-quiz') return incoming;
-  function mergeSessions(a, b) {
+  function mergeSessions(...lists) {
     const seen = new Set(), out = [];
-    [...(a || []), ...(b || [])].forEach(session => {
+    lists.flatMap(list => list || []).forEach(session => {
       if (!session || typeof session.t !== 'number') return;
       const key = [session.t, session.subj, session.topic, JSON.stringify(session.results || {})].join('|');
       if (!seen.has(key)) { seen.add(key); out.push(session); }
@@ -298,10 +298,13 @@ export function mergeBackup(current, incoming) {
     if (!plans[id] || (p.lastAt || 0) >= (plans[id].lastAt || 0)) plans[id] = p;
   });
   const cycle = Math.max(Number(current.cycle || 0), Number(incoming.cycle || 0));
+  // A reporting boundary partitions one history, not two independently merged lists.
+  // Otherwise a stale device can put an already archived session back in sessions.
+  const history = cycle ? mergeSessions(current.sessions, current.archive, incoming.sessions, incoming.archive) : null;
   return {
     app: 'kyle-dse-quiz', version: 1, exportedAt: new Date().toISOString(),
-    sessions: mergeSessions(current.sessions, incoming.sessions),
-    archive: mergeSessions(current.archive, incoming.archive),
+    sessions: history ? history.filter(session => session.t >= cycle) : mergeSessions(current.sessions, incoming.sessions),
+    archive: history ? history.filter(session => session.t < cycle) : mergeSessions(current.archive, incoming.archive),
     // A new reporting cycle must not discard unfinished work on another device.
     // Explicit completion/deletion remains governed by each draft's tombstone.
     drafts: mergeDrafts(current.drafts, incoming.drafts),

@@ -156,6 +156,52 @@ test('attempt snapshots preserve submitted text, selections and source versions 
   assert.doesNotMatch(JSON.stringify(snapshot),/PRIVATE_QUESTION|PRIVATE_REFERENCE/);
 });
 
+test('an MC option correction changes scoring identity even when the explanation stays unchanged',()=>{
+  const item={id:'mc-version',kind:'mc',marks:1,stem:'Synthetic MC',options:['Alpha','Beta'],correct:'Unchanged explanation',correctOpt:'A'};
+  const score={ok:true,marks:1,tot:1},first=exercise(1,{'mc-version':{...score}});
+  first.results['mc-version'].attempt=library.attemptSnapshot(item,'A',[],score,first.t);
+  const saved=JSON.stringify(first),before=first.results['mc-version'].attempt;
+  item.correctOpt='B';
+  const next=exercise(15*864e5+1,{'mc-version':{...score}});
+  next.results['mc-version'].attempt=library.attemptSnapshot(item,'B',[],score,next.t);
+  const after=next.results['mc-version'].attempt;
+  assert.notEqual(after.questionVersion,before.questionVersion);
+  assert.equal(after.rubricVersion,before.rubricVersion);assert.equal(after.scoreMethod,'mc-comparison');
+  assert.equal(library.indexHistory([first,next])['mc-version'].state,'learning','corrected questions require fresh consolidation evidence');
+  assert.equal(JSON.stringify(first),saved,'new question versions never rewrite submitted history');
+});
+
+test('a reviewed ANY-to-ALL rubric change invalidates question and rubric scoring versions',()=>{
+  const item={id:'rubric-version',kind:'sub',marks:2,stem:'Synthetic rubric',correct:'Same reference',checks:['First','Second','Third'],practiceRubric:{version:1,groups:[
+    {id:'choice',marks:1,condition:{any:[0,1]}},{id:'independent',marks:1,all:[2]}
+  ]}};
+  const checked=[0,2],firstScore=library.practiceScore(item,checked,null);
+  const first=library.attemptSnapshot(item,'Submitted answer',checked,{marks:firstScore,tot:2},123);
+  const saved=JSON.stringify(first);
+  item.practiceRubric.groups[0].condition={all:[0,1]};
+  const nextScore=library.practiceScore(item,checked,null);
+  const next=library.attemptSnapshot(item,'Submitted answer',checked,{marks:nextScore,tot:2},456);
+  assert.equal(firstScore,2);assert.equal(nextScore,1);
+  assert.notEqual(next.questionVersion,first.questionVersion,'pending grading compares questionVersion and must detect scoring-only changes');
+  assert.notEqual(next.rubricVersion,first.rubricVersion);
+  assert.equal(next.scoreMethod,'reviewed-rubric');assert.equal(JSON.stringify(first),saved);
+});
+
+test('scoring fingerprints canonicalize equivalent reviewed rubric syntax without mutating its source',()=>{
+  const item={id:'canonical-rubric',kind:'sub',marks:3,stem:'Synthetic rubric',checks:['Method','Condition','Alternative A','Alternative B'],practiceRubric:{version:1,groups:[
+    {id:'method',marks:1,condition:{all:[0,1]}},{id:'answer',marks:2,condition:{any:[2,3]}}
+  ]}};
+  const equivalent={...item,practiceRubric:{note:'Review metadata is not a scoring condition',groups:[
+    {any:[3,2],marks:2,id:'answer'},{all:[1,0],id:'method',marks:1}
+  ],version:1}};
+  const before=JSON.stringify([item,equivalent]),score={marks:3,tot:3};
+  const first=library.attemptSnapshot(item,'Same answer',[0,1,2],score,123);
+  const next=library.attemptSnapshot(equivalent,'Same answer',[0,1,2],score,456);
+  assert.equal(next.questionVersion,first.questionVersion);assert.equal(next.rubricVersion,first.rubricVersion);
+  assert.equal(library.practiceScore(item,[0,1,2],null),library.practiceScore(equivalent,[0,1,2],null));
+  assert.equal(JSON.stringify([item,equivalent]),before);
+});
+
 test('targeted practice keeps explicit IDs, removes duplicates and bounds a selection without broadening it',()=>{
   const back='#/library/books/chem/T1';
   const href=library.drillHref('chem',['q2','q1','q2',''],back),params=new URLSearchParams(href.split('?')[1]);
@@ -164,6 +210,30 @@ test('targeted practice keeps explicit IDs, removes duplicates and bounds a sele
   assert.equal(library.drillHref('all',[],back),'');
   assert.equal(new URLSearchParams(library.drillHref('all',Array.from({length:120},(_,i)=>'q'+i),back).split('?')[1]).get('ids').split(',').length,100);
   assert.doesNotMatch(library.drillHref('chem',['q1'],'https://other.invalid/'),/other.invalid/);
+});
+
+for(const withSharedRoute of [false,true]) test(`library back routes reject encoded authentication keys ${withSharedRoute?'through the shared helper':'when standalone'}`,()=>{
+  const back='#/library/papers/math/2026/mock-2?mistake=3',sandbox={window:{location:{hash:back}}};
+  vm.createContext(sandbox);
+  if(withSharedRoute)vm.runInContext(readFileSync(new URL('./study-experience.js',import.meta.url),'utf8'),sandbox);
+  vm.runInContext(readFileSync(new URL('./library.js',import.meta.url),'utf8'),sandbox);
+  const calls=[];
+  if(withSharedRoute){
+    const shared=sandbox.window.DSEStudy.safeRoute;
+    sandbox.window.DSEStudy.safeRoute=value=>{calls.push(value);return shared(value);};
+  }
+  const routeLibrary=sandbox.window.DSELibrary;
+  const destination=value=>new URLSearchParams(routeLibrary.drillHref('math',['synthetic-id'],value).split('?')[1]).get('back');
+  assert.equal(destination(back),back);
+  for(const unsafe of ['#/records?%68andoff=synthetic-secret','#/records?SYNC=synthetic-secret','#/records?%73%59%6e%43=synthetic-secret','#/records?%68andoff','#/records?sync',
+    'javascript:alert(1)','#//other.invalid/','#/records\n','#/records?value=<tag>']){
+    assert.equal(destination(unsafe),back,'unsafe explicit routes fall back to the current safe location');
+    sandbox.window.location.hash=unsafe;
+    assert.equal(destination(unsafe),'#/library/books','an unsafe current route cannot become the fallback');
+    sandbox.window.location.hash=back;
+  }
+  assert.equal(destination('#/'),'#/','the shared home fallback must not reject a valid home route');
+  if(withSharedRoute)assert.ok(calls.includes(back)&&calls.includes('#/records?%68andoff=synthetic-secret'),'safeBack delegates to DSEStudy.safeRoute');
 });
 
 test('recall cards retain verified source words, deduplicate matching sources and never invent missing concepts',()=>{
@@ -253,12 +323,14 @@ test('account reading state survives a reload with filters, expanded answer card
 });
 
 test('reading remains usable when local storage is blocked or malformed and concept reveal stays closed',()=>{
-  const f=reviewFixture();f.window.localStorage={getItem(){throw new Error('blocked');},setItem(){throw new Error('blocked');}};
+  const f=reviewFixture();
+  // Fault-inject the adapter selected at load rather than replacing the global object.
+  Object.assign(f.window.localStorage,{getItem(){throw new Error('blocked');},setItem(){throw new Error('blocked');}});
   assert.doesNotThrow(()=>f.library.render(['concepts','chem','T1'],f.api));
   assert.match(f.root.innerHTML,/先看題目，用自己的話回憶/);assert.match(f.root.innerHTML,/正解原文/);
   assert.doesNotMatch(f.root.innerHTML,/<details class="ml-recall"[^>]*\bopen\b/);
   assert.doesNotThrow(()=>f.library.remember());
-  f.library.reset();f.window.localStorage={getItem:()=>'{broken',setItem(){}};
+  f.library.reset();Object.assign(f.window.localStorage,{getItem:()=>'{broken',setItem(){}});
   assert.doesNotThrow(()=>f.library.render(['concepts'],f.api));assert.match(f.root.innerHTML,/概念回顧/);
 });
 
@@ -301,7 +373,7 @@ test('personal reminders remain local, escaped and account-specific without chan
   assert.doesNotMatch(f.root.innerHTML,/先檢查單位/);
   f.root.events.input({target:{...target,value:'另一個帳號的提醒'}});
   assert.equal(f.storage.get('dse_library_note_v1:yeelam:q-wrong'),'另一個帳號的提醒');assert.equal(f.storage.get('dse_library_note_v1:kyle:q-wrong'),note);
-  f.window.localStorage={getItem:()=>'',setItem(){throw new Error('full');}};
+  Object.assign(f.window.localStorage,{getItem:()=>'',setItem(){throw new Error('full');}});
   f.root.events.input({target});assert.match(status.textContent,/未能保存/);
 });
 

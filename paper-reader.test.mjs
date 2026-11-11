@@ -51,7 +51,10 @@ function boot(overrides = {}) {
     return sheet;
   };
   const thumbs = node('thumbs', () => ({ top: 160, bottom: 460, height: 300 }));
-  const toolbar = node('toolbar', () => ({ top: 100, bottom: 150, height: 50 }));
+  const toolbar = node('toolbar', () => {
+    const top = overrides.stickyToolbar ? Math.max(100, 200 - scroll.scrollTop) : 100;
+    return { top, bottom: top + 50, height: 50 };
+  });
   toolbar.parentElement = node('toolbar-parent');
   const trigger = doc.activeElement = node('trigger');
   const body = doc.body = node('document-body');
@@ -102,6 +105,23 @@ test('restored page fractions survive resizing and report only normalized readin
   assert.equal(position.page, 2); assert.ok(Math.abs(position.fraction - .4) < 1e-9);
   assert.ok(app.positions.every(value => value.page >= 1 && value.page <= 3 && value.fraction >= 0 && value.fraction < 1));
   app.reader.destroy();
+});
+
+test('refresh restoration settles a moving sticky toolbar before tracking the saved page', async () => {
+  for (const fraction of [0, .4]) {
+    const app = boot({ stickyToolbar: true, initialPosition: { page: 3, fraction } });
+    let position = app.reader.getPosition();
+    assert.equal(position.page, 3, 'a moving toolbar must not turn a restored page into its predecessor');
+    assert.ok(Math.abs(position.fraction - fraction) < 1e-9);
+    app.timers.filter(timer => timer.delay === 200).forEach(timer => timer.fn());
+    app.flush(); await settle();
+    position = app.reader.getPosition();
+    assert.equal(position.page, 3);
+    assert.ok(Math.abs(position.fraction - fraction) < 1e-9);
+    assert.ok(app.positions.every(value => value.page === 3));
+    assert.deepEqual(app.loads.slice().sort(), [2, 3], 'restoration must not fetch an accidentally selected earlier page');
+    app.reader.destroy();
+  }
 });
 
 test('mistake jumps preserve stable question IDs and wrap without losing explicit selections', () => {

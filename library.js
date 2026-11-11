@@ -1,6 +1,7 @@
 /* Private, structured mistake library. No examination data is shipped here. */
 (function (global) {
   'use strict';
+  var storage = global.QUIZ_STORAGE || global.localStorage;
   var states = [
     { key: 'unseen', label: '未複習' }, { key: 'wrong', label: '仍需複習' },
     { key: 'learning', label: '待鞏固' }, { key: 'mastered', label: '已掌握' },
@@ -63,7 +64,7 @@
   function storageKey(user) { return 'dse_library_view_v1:' + user; }
   function saveReading() {
     if (!memoryUser) return;
-    try { global.localStorage.setItem(storageKey(memoryUser), JSON.stringify({version:1, positions:positions, filters:filters, years:selectedYears, search:searchState})); } catch (_) {}
+    try { storage.setItem(storageKey(memoryUser), JSON.stringify({version:1, positions:positions, filters:filters, years:selectedYears, search:searchState})); } catch (_) {}
   }
   function chooseUser(user) {
     user = typeof user === 'string' && /^[a-z0-9_-]{1,40}$/i.test(user) ? user : '';
@@ -71,7 +72,7 @@
     clearReading(); positions = {}; filters = {}; selectedYears = {}; searchState = blankSearch(); memoryUser = user;
     if (!user) return;
     try {
-      var saved = JSON.parse(global.localStorage.getItem(storageKey(user)) || 'null');
+      var saved = JSON.parse(storage.getItem(storageKey(user)) || 'null');
       if (!saved || saved.version !== 1) return;
       if (plainObject(saved.positions)) Object.keys(saved.positions).slice(-200).forEach(function (key) {
         var row = saved.positions[key];
@@ -92,8 +93,17 @@
     } catch (_) {}
   }
   function safeBack(value) {
+    if (global.DSEStudy && typeof global.DSEStudy.safeRoute === 'function') {
+      return global.DSEStudy.safeRoute(value) === value ? value : '';
+    }
+    // Keep standalone library usage as strict as the shared navigation helper.
+    var authQuery = String(value || '').split('?').slice(1).join('?').split('&').some(function (pair) {
+      var key = pair.split('=')[0];
+      try { key = decodeURIComponent(key); } catch (_) {}
+      return /^(?:handoff|sync)$/i.test(key);
+    });
     return typeof value === 'string' && value.length <= 24000 && /^#\/(?:$|(?:practice|session|today|drill|random|library|records)(?:[/?]|$))/.test(value) &&
-      !/[\u0000-\u001f<>]/.test(value) && !/[?&](?:handoff|sync)=/.test(value) ? value : '';
+      !/[\u0000-\u001f<>]/.test(value) && !authQuery ? value : '';
   }
   function currentBack() { return safeBack(global.location && global.location.hash) || '#/library/books'; }
   function questionBack() {
@@ -142,7 +152,7 @@
   function noteKey(id) { return 'dse_library_note_v1:' + memoryUser + ':' + encodeURIComponent(id); }
   function personalNote(item) {
     var value = '', available = !!memoryUser;
-    try { if (available) value = String(global.localStorage.getItem(noteKey(item.id)) || '').slice(0,1000); } catch (_) { available = false; }
+    try { if (available) value = String(storage.getItem(noteKey(item.id)) || '').slice(0,1000); } catch (_) { available = false; }
     var id = 'ml-note-' + fingerprint(item.id);
     return '<details class="ml-note" data-reading-id="note-' + esc(item.id) + '"><summary>我的防錯提醒（選填）</summary><label for="' + id + '">寫一句下次要提醒自己的話</label>' +
       '<textarea id="' + id + '" data-note-id="' + esc(item.id) + '" maxlength="1000" rows="3" placeholder="例如：讀完題目後再核對單位。"' + (available ? '' : ' disabled') + '>' + esc(value) + '</textarea>' +
@@ -244,14 +254,29 @@
   function attemptSnapshot(item, answer, checkedIndices, result, at, options) {
     options = options || {};
     var rubric = practiceRubric(item);
+    function compareScoring(a, b) {
+      var left = JSON.stringify(a), right = JSON.stringify(b);
+      return left < right ? -1 : left > right ? 1 : 0;
+    }
+    function scoringCondition(condition) {
+      if (Number.isInteger(condition)) return condition;
+      var key = condition.all ? 'all' : 'any', out = {};
+      out[key] = condition[key].map(scoringCondition).sort(compareScoring);
+      return out;
+    }
+    // Hash scoring semantics, not object-key order, group order or descriptive metadata.
+    var scoringRubric = rubric ? { version: rubric.version, groups: rubric.groups.map(function (group) {
+      var condition = Object.prototype.hasOwnProperty.call(group, 'condition') ? group.condition : group.all ? { all: group.all } : { any: group.any };
+      return { id: group.id, marks: group.marks, condition: scoringCondition(condition) };
+    }).sort(compareScoring) } : null;
     return JSON.parse(JSON.stringify({ version: 1, submittedAt: at, questionId: item.id,
       kind: item.kind, answer: String(answer == null ? '' : answer),
       checkedIndices: (checkedIndices || []).slice().sort(function (a, b) { return a - b; }),
       questionVersion: fingerprint([item.id, item.stemFull || item.stem || '', item.options || [],
         item.figures || [], item.tables || [], item.paper_id || '', item.source_sha256 || null,
-        item.checks || [], item.correct || item.correctOpt || '', item.marks]),
+        item.checks || [], item.correct || '', item.correctOpt || '', item.marks, scoringRubric]),
       sourceSha256: item.source_sha256 || null,
-      rubricVersion: rubric ? fingerprint(rubric) : 'manual-v1',
+      rubricVersion: scoringRubric ? fingerprint(scoringRubric) : 'manual-v1',
       scoreMethod: item.kind === 'mc' ? 'mc-comparison' : rubric ? 'reviewed-rubric' : 'manual',
       marks: result.marks, total: result.tot, assisted: options.assisted === true,
       onPaper: options.onPaper === true, nextReviewAt: options.nextReviewAt || null }));
@@ -420,7 +445,7 @@
       var node = event.target, id = node && node.getAttribute && node.getAttribute('data-note-id');
       if (!id || id.length > 200) return;
       var message;
-      try { global.localStorage.setItem(noteKey(id),String(node.value || '').slice(0,1000)); message = '已保存在此裝置。'; }
+      try { storage.setItem(noteKey(id),String(node.value || '').slice(0,1000)); message = '已保存在此裝置。'; }
       catch (_) { message = '此裝置未能保存，請先複製提醒文字。'; }
       var section = node.closest && node.closest('.ml-note'), status = section && section.querySelector('[data-note-status]');
       if (status) status.textContent = message;
@@ -489,14 +514,14 @@
     var next = order[(subjectIndex + 1) % order.length];
     frame(code, header('錯題庫與歸納', '選年份，再選課題。原答案、錯因與正解依次展開。', '#/library/books', '科目') +
       '<div class="ml-reading-actions"><a class="btn btn-ghost" href="#/library/books/concepts/' + code + '">回顧' + subjectName(code) + '概念</a></div>' +
-      '<div class="inventory-switch" aria-label="學科切換"><a class="shoulder-link" href="#/library/books/' + previous + '" aria-label="上一個學科：' + subjectName(previous) + '">‹ LB</a>' +
-      '<strong>' + subjectName(code) + '</strong><a class="shoulder-link" href="#/library/books/' + next + '" aria-label="下一個學科：' + subjectName(next) + '">RB ›</a></div>' +
-      '<div class="inventory-layout"><section class="inventory-years" aria-label="年份與原卷成績"><h2>YEAR SELECT / 年份與狀態</h2>' +
-      '<div class="year-list" id="mlYears"></div><p class="year-grade-note">LV＝DSE 試卷參考等級（非官方估算）；HP＝原卷分數；SP＝錯題數。缺少適用分界時顯示「—」；單卷不評全科等級。</p>' +
+      '<div class="inventory-switch" aria-label="學科切換"><a class="shoulder-link" href="#/library/books/' + previous + '" aria-label="上一個學科：' + subjectName(previous) + '">←</a>' +
+      '<strong>' + subjectName(code) + '</strong><a class="shoulder-link" href="#/library/books/' + next + '" aria-label="下一個學科：' + subjectName(next) + '">→</a></div>' +
+      '<div class="inventory-layout"><section class="inventory-years" aria-label="年份與原卷成績"><h2>年份與原卷</h2>' +
+      '<div class="year-list" id="mlYears"></div><p class="year-grade-note">原卷分數與練習成績分開；參考等級非官方，缺少完整分界不作估算。</p>' +
       '<p class="year-grade-note" id="mlGradeStatus" role="status">正在核對原卷成績…</p><div id="mlYearSummary"></div></section>' +
-      '<section class="inventory-topics" aria-label="課題目錄"><div class="ml-section-head"><h2>TOPIC LIST / 課題</h2><label>排序 <select id="mlTopicSort"><option value="syllabus">考綱順序</option>' +
+      '<section class="inventory-topics" aria-label="課題目錄"><div class="ml-section-head"><h2>課題目錄</h2><label>排序 <select id="mlTopicSort"><option value="syllabus">考綱順序</option>' +
       '<option value="pending">待複習最多</option></select></label></div><div class="ml-topics" id="mlTopics"></div>' +
-      '<section class="topic-info" aria-label="課題資訊"><span aria-hidden="true">INFO</span><div id="mlTopicInfo" aria-live="polite"></div></section></section></div>' +
+      '<section class="topic-info" aria-label="課題資訊"><span aria-hidden="true">課題便箋</span><div id="mlTopicInfo" aria-live="polite"></div></section></section></div>' +
       '<p class="library-note">長期已掌握＝有原答記錄的兩次獨立練習連續全對，且在間隔複習到期後再次答對；閱讀不計作答。</p>');
     var root = api.root, sort = root.querySelector('#mlTopicSort');
     sort.value = (filters[code] || {}).sort || 'syllabus';
@@ -514,8 +539,8 @@
         return '<button class="inventory-year" type="button" data-year="' + esc(year) + '" aria-pressed="' + (selected === year) + '">' +
           '<span class="year-number" aria-hidden="true">' + (year === 'all' ? 'ALL' : esc(info.badge)) + '</span><span class="year-body"><span class="year-name">' +
           (year === 'all' ? '全部年份' : esc(info.label + ' ' + subjectName(code))) + '</span><span class="year-meters">' +
-          (year === 'all' ? '' : '<span><abbr title="DSE 試卷等級">LV</abbr> <b>' + esc(level) + '</b></span><span><abbr title="原卷分數">HP</abbr> <b>' + score + '</b></span>') +
-          '<span><abbr title="錯題數">SP</abbr> <b>' + items.length + '</b></span></span>' +
+          (year === 'all' ? '' : '<span><abbr title="DSE 試卷參考等級，非官方">參考等級</abbr> <b>' + esc(level) + '</b></span><span><abbr title="已核實原卷分數">原卷</abbr> <b>' + score + '</b></span>') +
+          '<span><abbr title="收錄錯題數">錯題</abbr> <b>' + items.length + '</b></span></span>' +
           (year !== 'all' && metrics ? '<span class="year-grade-note">' + esc(info.mock ? info.label + ' · ' + subjectName(code) : assessment.scope) + (metrics.current ? ' · 等級估算' : ' · 等級未評') + '</span>' : '') + '</span></button>';
       }).join('');
     }
@@ -592,7 +617,7 @@
         return /^images\/(chem|bio|math|m2|physics)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path) ? '<figure><img data-library-image="' + esc(f.path) +
           '" loading="lazy" decoding="async" alt="' + esc(f.alt || '原題圖表') + '"' +
           (f.width > 0 && f.height > 0 ? ' width="' + Number(f.width) + '" height="' + Number(f.height) + '"' : '') + '><figcaption>' + esc(f.alt) + '</figcaption></figure>' : '';
-      }).join('') + '</div><div class="ml-reading-actions"><a class="btn btn-primary ml-redo-one" href="' + esc(drillHref(context.code,[item.id],returnBack)) + '">' + (item.kind === 'mc' ? '獨立重做這道選擇題' : '獨立重做這一題') + '</a></div>' +
+      }).join('') + '</div><div class="ml-reading-actions">' + (context.paperHref ? '<a class="btn btn-ghost ml-original-paper" href="' + esc(context.paperHref(context.code,item)) + '">對照原卷批注 ↗</a>' : '') + '<a class="btn btn-primary ml-redo-one" href="' + esc(drillHref(context.code,[item.id],returnBack)) + '">' + (item.kind === 'mc' ? '獨立重做這道選擇題' : '獨立重做這一題') + '</a></div>' +
       '<details class="ml-reveal" data-reading-id="answer-' + esc(item.id) + '"><summary>先回憶，再查看原答案、錯因與完整詳解</summary><div class="ml-reveal-body">' +
       '<div class="ml-answer ml-answer-own"><h3>我的原答案</h3><p>' + own + '</p></div>' +
       '<div class="ml-answer ml-answer-deduct"><h3>扣分點與錯因</h3><p>' + text(item.deduct) + '</p></div>' +

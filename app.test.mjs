@@ -204,7 +204,8 @@ test('tombstoned answers neither appear selected nor pass full or partial submis
   app.node('#submitBtn').listeners.click();
   app.node('#submitAnsweredBtn').listeners.click();
   assert.equal(app.saved.has('dse_quiz_pending_review_v1'), false);
-  assert.equal(app.saved.has('dse_quiz_sessions_v2'), false);
+  assert.deepEqual(JSON.parse(app.saved.get('dse_quiz_sessions_v2')), []);
+  assert.deepEqual(JSON.parse(app.saved.get('dse_quiz_archive_v1')), []);
 });
 
 test('refreshing pending self-assessment preserves the submitted answer and chosen score until explicit save', () => {
@@ -231,7 +232,8 @@ test('refreshing pending self-assessment preserves the submitted answer and chos
   first.node('#submitBtn').listeners.click();
   score.value = '1'; score.listeners.input();
   assert.equal(JSON.parse(first.saved.get('dse_quiz_pending_review_v1')).scores['example-mc'].marks, 1);
-  assert.equal(first.saved.has('dse_quiz_sessions_v2'), false, 'self-assessment is not yet a saved attempt');
+  assert.deepEqual(JSON.parse(first.saved.get('dse_quiz_sessions_v2')), [], 'self-assessment is not yet a saved attempt');
+  assert.deepEqual(JSON.parse(first.saved.get('dse_quiz_archive_v1')), []);
   const restored = boot('#/', undefined, Object.fromEntries(first.saved));
   subjectQuestion(restored); const restoredScore = assessmentInputs(restored);
   restored.location.hash = '#/session/chem/T3'; restored.events.hashchange();
@@ -239,7 +241,8 @@ test('refreshing pending self-assessment preserves the submitted answer and chos
   const pending = JSON.parse(restored.saved.get('dse_quiz_pending_review_v1'));
   assert.equal(pending.draft.text['example-mc'], '這是提交時的合成原答');
   assert.equal(pending.scores['example-mc'].marks, 1);
-  assert.equal(restored.saved.has('dse_quiz_sessions_v2'), false);
+  assert.deepEqual(JSON.parse(restored.saved.get('dse_quiz_sessions_v2')), []);
+  assert.deepEqual(JSON.parse(restored.saved.get('dse_quiz_archive_v1')), []);
   restored.node('#saveSessionBtn').listeners.click();
   const records = JSON.parse(restored.saved.get('dse_quiz_sessions_v2'));
   assert.equal(records.length, 1); assert.equal(records[0].results['example-mc'].marks, 1);
@@ -254,7 +257,7 @@ test('fortnight rollover archives reports without clearing unfinished answers or
   const draft={'chem:T3':{pick:{'example-mc':'B'},text:{},paper:{},changedAt:{'pick:example-mc':before}}};
   const app=boot('',undefined,{dse_quiz_cycle_v1:String(before),dse_quiz_draft_v2:JSON.stringify(draft)},false,false,now);
   assert.deepEqual(JSON.parse(app.saved.get('dse_quiz_draft_v2')),draft);
-  assert.match(app.node('#app').innerHTML,/繼續未完成的作答/);
+  assert.match(app.node('#app').innerHTML,/繼續未完成作答/);
 });
 
 test('a new unsuccessful attempt schedules a short corrective check without granting mastery', () => {
@@ -367,35 +370,37 @@ test('navigation resets the content pane and returning to the library restores i
   assert.equal(pane.scrollTop, 230, 'returning to the library restores the inner pane position');
 });
 
-test('archive backdrop reuses current home, has no duplicate IDs, and clears when leaving books', () => {
-  const app = boot();
-  app.location.hash = '#/library/books'; app.events.hashchange();
-  const backdrop = app.node('#archiveBackdrop');
-  assert.equal(backdrop.hidden, false);
-  assert.match(backdrop.innerHTML, /開始練習/);
-  assert.match(backdrop.innerHTML, /<b>1<\/b> 題在庫/);
-  assert.doesNotMatch(backdrop.innerHTML, /\sid=|aria-live=|role="status"/);
-  assert.doesNotMatch(app.node('#app').innerHTML, /archive-home-content/);
-  app.location.hash = '#/library/papers'; app.events.hashchange();
-  assert.equal(backdrop.hidden, true);
-  assert.equal(backdrop.innerHTML, '');
+test('notebook library never mounts a duplicated home or decorated archive backdrop', () => {
+  const app = boot(), backdrop = app.node('#archiveBackdrop');
+  // Clear any retained legacy decoration before rendering the new notebook page.
+  backdrop.hidden = false;
+  backdrop.innerHTML = '<div class="archive-home-content" id="stale-private-home">legacy content</div>';
+  for (const route of ['#/library/books', '#/library/papers', '#/']) {
+    app.location.hash = route; app.events.hashchange();
+    assert.equal(backdrop.hidden, true);
+    assert.equal(backdrop.innerHTML, '');
+    assert.doesNotMatch(app.node('#app').innerHTML, /archive-home-content|stale-private-home/);
+  }
 });
 
-test('private home backdrop is cleared when another tab removes the session', async () => {
+test('private notebook keeps retired decoration empty and clears private markup on cross-tab logout', async () => {
   let finishBank;
   const app = boot('', async url => url.endsWith('/bank') ? new Promise(resolve => { finishBank = resolve; }) : { ok: true, json: async () => ({ data: null }) },
     { dse_quiz_sync_session_v1: 'p'.repeat(43), dse_quiz_auth_mode_v1: 'password' }, true, true);
   finishBank({ ok: true, json: async () => app.context.QUIZ_DATA });
   await settle();
-  app.location.hash = '#/library/books'; app.events.hashchange();
-  assert.equal(app.node('#archiveBackdrop').hidden, false);
+  app.location.hash = '#/library/books/chem/T3'; app.events.hashchange();
+  assert.match(app.node('#mlQuestions').innerHTML, /question-example-mc/);
+  assert.equal(app.node('#archiveBackdrop').hidden, true);
+  assert.equal(app.node('#archiveBackdrop').innerHTML, '');
   const saved = [...app.saved.entries()];
-  assert.ok(saved.every(([, value]) => !value.includes('archive-home-content')));
+  assert.ok(saved.every(([, value]) => !value.includes('archive-home-content') && !value.includes('示例題')));
   app.saved.delete('dse_quiz_sync_session_v1');
   app.events.storage({ key: 'dse_quiz_sync_session_v1' });
   assert.equal(app.node('#archiveBackdrop').hidden, true);
   assert.equal(app.node('#archiveBackdrop').innerHTML, '');
   assert.match(app.node('#app').innerHTML, /passwordLoginForm/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /question-example-mc|示例題|archive-home-content/);
 });
 
 function practiceFixture(app) {
@@ -411,12 +416,12 @@ function practiceFixture(app) {
   subjects.bio.items.push({ id: 'bio-mc', kind: 'mc', topic: 'I', year: '2023', paper: '卷一', qref: '示例 5', stem: '生物選擇題', correctOpt: 'D', lost: 1 });
 }
 
-test('TOPICS filters years, subject switches, topic counts, information and random practice together', () => {
+test('notebook practice filters years, subject tabs, topic counts, information and random practice together', () => {
   const app = boot(); practiceFixture(app);
   app.location.hash = '#/practice/chem/2023'; app.events.hashchange();
   const html = app.node('#app').innerHTML;
   assert.match(html, /2023 年 · 化學 · 3 道錯題/);
-  assert.match(html, /02 TOPICS/);
+  assert.match(html, /02 個課題/);
   assert.match(html, /href="#\/session\/chem\/T3\/2023"/);
   assert.match(html, /href="#\/session\/chem\/__random__\/2023"/);
   assert.match(html, /href="#\/practice\/bio\/2023"/);
@@ -504,11 +509,11 @@ test('late grade requests cannot overwrite a different subject and missing grade
   assert.match(app.node('#practiceYears').innerHTML, /2023 生物/);
   assert.doesNotMatch(app.node('#practiceYears').innerHTML, /2022 化學|75/);
   app.location.hash = '#/practice/chem/2022'; app.events.hashchange(); await settle();
-  assert.match(app.node('#practiceYears').innerHTML, /HP<\/abbr> <b>75<small>\/100/);
-  assert.match(app.node('#practiceYears').innerHTML, /LV<\/abbr> <b>—/);
+  assert.match(app.node('#practiceYears').innerHTML, /原卷<\/abbr> <b>75<small>\/100/);
+  assert.match(app.node('#practiceYears').innerHTML, /參考等級<\/abbr> <b>—/);
 });
 
-test('practice and mistake-library LV share paper DSE boundaries, not review progress or a raw level field', async () => {
+test('practice and mistake-library reference grades share paper DSE boundaries, not review progress or a raw level field', async () => {
   const catalog = { subjects: { chem: ['2023', '2022'], bio: ['2023'], math: ['2023'] }, papers: {
     chem: {
       '2023': { assessment: { earned: 65, total: 100, scope: '兩卷示例', boundaries: [
@@ -535,15 +540,15 @@ test('practice and mistake-library LV share paper DSE boundaries, not review pro
     ]) {
       app.location.hash = route + subject; app.events.hashchange(); await settle();
       const html = app.node(selector).innerHTML;
-      assert.ok(html.includes('title="DSE 試卷等級">LV</abbr> <b>' + level + '</b>'), route + subject);
+      assert.ok(html.includes('title="DSE 試卷參考等級，非官方">參考等級</abbr> <b>' + level + '</b>'), route + subject);
       assert.ok(html.includes(scope));
       assert.ok(html.includes(subject === 'math' ? '等級未評' : '等級估算'));
       assert.match(app.node(status).textContent, /DSE 參考分界/);
-      assert.match(app.node('#app').innerHTML, /非官方估算/);
-      if (subject === 'chem') assert.match(html, /LV<\/abbr> <b>—/, 'an incomplete boundary table never invents a lower grade');
+      assert.match(app.node('#app').innerHTML, /參考等級非官方/);
+      if (subject === 'chem') assert.match(html, /參考等級<\/abbr> <b>—/, 'an incomplete boundary table never invents a lower grade');
       if (subject === 'math') {
         assert.doesNotMatch(html, /<b>5\*\*/);
-        assert.match(html, /HP<\/abbr> <b>90/);
+        assert.match(html, /原卷<\/abbr> <b>90/);
       }
     }
   }
@@ -593,7 +598,7 @@ test('library offers two entrances, then graded papers select subject and publis
   await settle();
   const choices = app.node('#app').innerHTML;
   assert.match(choices, /href="#\/library\/books".*錯題庫/s);
-  assert.match(choices, /href="#\/library\/papers".*紅筆批改卷/s);
+  assert.match(choices, /href="#\/library\/papers".*<h2>批改卷<\/h2>/s);
   assert.equal((choices.match(/class="library-hub-card /g) || []).length, 2);
   assert.equal(app.node('#libraryPaperCount').textContent, '3');
   assert.equal(app.node('#libraryNewestYear').textContent, '2024');
@@ -794,7 +799,8 @@ test('failed continuous pages retry locally without clearing readable neighbours
   app.node('#paperRetry-2').listeners.click(); await settle();
   assert.equal(app.node('#paperImage-2').src, 'blob:retry-2');
   assert.equal(app.node('#paperRetry-2').hidden, true);
-  assert.ok(!app.saved.has('dse_quiz_sessions_v2'));
+  assert.deepEqual(JSON.parse(app.saved.get('dse_quiz_sessions_v2')), []);
+  assert.deepEqual(JSON.parse(app.saved.get('dse_quiz_archive_v1')), []);
 });
 
 test('a page cancelled by a distant jump loads normally when revisited', async () => {
@@ -937,11 +943,11 @@ test('password login starts cloud sync while the private bank is still loading',
   assert.equal(typeof finishBank, 'function');
   assert.ok(calls.some(call => call.url.endsWith('/sync') && call.options.method === 'GET'),
     'records begin downloading before the bank finishes');
-  assert.match(app.node('#app').innerHTML, /開始練習/);
+  assert.match(app.node('#app').innerHTML, /href="#\/practice\/chem">課題練習/);
   assert.doesNotMatch(app.node('#app').innerHTML, /passwordLoginForm/);
   finishBank({ ok: true, json: async () => app.context.QUIZ_DATA });
   await settle();
-  assert.match(app.node('#app').innerHTML, /題在庫/);
+  assert.match(app.node('#app').innerHTML, /道錯題/);
 });
 
 test('a returning home browser renders before either private request completes and updates after each one', async () => {
@@ -956,8 +962,8 @@ test('a returning home browser renders before either private request completes a
     throw new Error('unchanged remote records must not be uploaded');
   }, { dse_quiz_sync_session_v1: 'p'.repeat(43), dse_quiz_auth_mode_v1: 'password', dse_quiz_cycle_v1: cycle }, true, true);
   assert.equal(app.location.hash, '#/');
-  assert.match(app.node('#app').innerHTML, /開始練習/);
-  assert.match(app.node('#app').innerHTML, /<b>—<\/b> 題在庫/);
+  assert.match(app.node('#app').innerHTML, /href="#\/practice\/chem">課題練習/);
+  assert.match(app.node('#app').innerHTML, /題庫載入中…/);
   assert.doesNotMatch(app.node('#app').innerHTML, /passwordLoginForm/);
   assert.equal(typeof finishBank, 'function');
   assert.equal(app.timers.some(timer => timer.delay === 600), false);
@@ -965,15 +971,24 @@ test('a returning home browser renders before either private request completes a
   assert.equal(typeof finishSync, 'function', 'cloud read starts while bank is pending');
   finishBank({ ok: true, json: async () => app.context.QUIZ_DATA });
   await settle();
-  assert.match(app.node('#app').innerHTML, /<b>1<\/b> 題在庫/);
-  assert.match(app.node('#app').innerHTML, /本輪已全對<strong class="c-green">0<small>/);
+  assert.match(app.node('#app').innerHTML, /<p>1 道錯題 · 1 題待複習／鞏固<\/p>/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /上次完成練習：/);
+  // Current-cycle results now live in records, not the long-term home summary.
+  app.location.hash = '#/records'; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /<b>0 \/ 1<\/b><span>本期最後一次答對/);
+  app.location.hash = '#/'; app.events.hashchange();
   finishSync({ ok: true, json: async () => ({ data: remote }) });
   await settle();
-  assert.match(app.node('#app').innerHTML, /本輪已全對<strong class="c-green">1<small>/);
-  assert.match(app.node('#app').innerHTML, /本輪待複習<strong class="c-red">0<small>/);
+  assert.match(app.node('#app').innerHTML, /上次完成練習：/);
+  assert.match(app.node('#app').innerHTML, /<p>1 道錯題 · 1 題待複習／鞏固<\/p>/,
+    'one legacy correct result must not be relabelled as long-term mastery');
   assert.match(app.node('#syncStatus').textContent, /已更新本機記錄/);
   assert.equal(calls.length, 2);
   assert.ok([...app.saved.values()].every(value => !value.includes('示例題')));
+  app.location.hash = '#/records'; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /<b>1 \/ 1<\/b><span>本期最後一次答對/);
+  assert.match(app.node('#app').innerHTML, /<div class="stat-val c-green">0 題<\/div><div class="stat-lbl">上次仍錯<\/div>/);
+  assert.equal(JSON.parse(app.saved.get('dse_quiz_sessions_v2')).length, 1);
 });
 
 test('a failed bank keeps home usable, retries on reconnect and keeps practice behind a loading view', async () => {
@@ -986,7 +1001,7 @@ test('a failed bank keeps home usable, retries on reconnect and keeps practice b
   await settle();
   app.timers.find(timer => timer.delay === 1000).fn(); await settle();
   app.timers.find(timer => timer.delay === 3000).fn(); await settle();
-  assert.match(app.node('#app').innerHTML, /開始練習/);
+  assert.match(app.node('#app').innerHTML, /href="#\/practice\/chem">課題練習/);
   assert.match(app.node('#app').innerHTML, /重試載入錯題庫/);
   assert.doesNotMatch(app.node('#app').innerHTML, /passwordLoginForm/);
   app.location.hash = '#/practice/chem'; app.events.hashchange();
@@ -999,7 +1014,7 @@ test('a failed bank keeps home usable, retries on reconnect and keeps practice b
   finishBank({ ok: true, json: async () => app.context.QUIZ_DATA });
   await settle();
   app.location.hash = '#/'; app.events.hashchange();
-  assert.match(app.node('#app').innerHTML, /<b>1<\/b> 題在庫/);
+  assert.match(app.node('#app').innerHTML, /<p>1 道錯題 · 1 題待複習／鞏固<\/p>/);
 });
 
 test('bank timeouts cover headers and body, retry automatically and never block home or clear login', async () => {
@@ -1016,7 +1031,7 @@ test('bank timeouts cover headers and body, retry automatically and never block 
       return phase === 'headers' ? stall() : { ok: true, json: stall };
     }, { dse_quiz_sync_session_v1: 'p'.repeat(43), dse_quiz_auth_mode_v1: 'password', dse_quiz_sessions_v2: progress }, true, true);
     await settle();
-    assert.match(app.node('#app').innerHTML, /開始練習/);
+    assert.match(app.node('#app').innerHTML, /href="#\/practice\/chem">課題練習/);
     if (phase !== 'body-network') app.timers.find(timer => timer.delay === 30000).fn();
     await settle();
     assert.match(app.node('#bankStatus').textContent, /正在自動重試/);
@@ -1026,7 +1041,7 @@ test('bank timeouts cover headers and body, retry automatically and never block 
     app.timers.find(timer => timer.delay === 1000).fn();
     await settle();
     assert.equal(calls, 2);
-    assert.match(app.node('#app').innerHTML, /<b>1<\/b> 題在庫/);
+    assert.match(app.node('#app').innerHTML, /<p>1 道錯題 · 1 題待複習／鞏固<\/p>/);
     assert.equal(app.saved.get('dse_quiz_sync_session_v1'), 'p'.repeat(43));
     assert.equal(app.saved.get('dse_quiz_sessions_v2'), progress);
     assert.ok([...app.saved.values()].every(value => !value.includes('示例題')));
@@ -1048,7 +1063,7 @@ test('bounded bank retries recover on the minute poll without a page refresh', a
   app.intervals.find(timer => timer.delay === 60000).fn();
   await settle();
   assert.equal(calls, 4);
-  assert.match(app.node('#app').innerHTML, /<b>1<\/b> 題在庫/);
+  assert.match(app.node('#app').innerHTML, /<p>1 道錯題 · 1 題待複習／鞏固<\/p>/);
 });
 
 test('authentication, configuration and invalid bank errors do not trigger automatic retries', async () => {
@@ -1134,7 +1149,7 @@ test('a slow bank from a replaced session cannot delay or overwrite the new bank
   finishOldBank({ ok: false, status: 401, json: async () => ({ error: 'not_connected' }) });
   await settle();
   assert.equal(app.saved.get('dse_quiz_sync_session_v1'), 'new-session');
-  assert.match(app.node('#app').innerHTML, /<b>1<\/b> 題在庫/);
+  assert.match(app.node('#app').innerHTML, /<p>1 道錯題 · 1 題待複習／鞏固<\/p>/);
   assert.doesNotMatch(app.node('#app').innerHTML, /未能讀取錯題庫|passwordLoginForm/);
 });
 
@@ -1179,7 +1194,7 @@ test('wrong passwords cannot load questions or overwrite progress', async () => 
   assert.equal(calls.length, 1);
   assert.equal(app.saved.has('dse_quiz_sync_session_v1'), false);
   assert.match(app.node('#syncStatus').textContent, /密碼不正確/);
-  assert.doesNotMatch(app.node('#app').innerHTML, /題在庫/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /道錯題/);
 });
 
 test('an existing owner connection upgrades automatically before reading private data', async () => {
@@ -1196,7 +1211,7 @@ test('an existing owner connection upgrades automatically before reading private
   assert.equal(app.saved.get('dse_quiz_sync_session_v1'), sessionId);
   assert.equal(app.saved.get('dse_quiz_auth_mode_v1'), 'password');
   assert.equal(calls.find(call => call.url.endsWith('/bank')).options.headers.Authorization, 'Bearer ' + sessionId);
-  assert.match(app.node('#app').innerHTML, /題在庫/);
+  assert.match(app.node('#app').innerHTML, /道錯題/);
 });
 
 test('automatic polling skips unchanged uploads, and logout retains local records', async () => {
@@ -1489,7 +1504,7 @@ test('an expired bank session locks the bank and preserves progress', async () =
   assert.equal(app.saved.has('dse_quiz_sync_session_v1'), false);
   assert.equal(app.saved.get('dse_quiz_sessions_v2'), progress);
   assert.match(app.node('#app').innerHTML, /連接已失效/);
-  assert.doesNotMatch(app.node('#app').innerHTML, /題在庫|bankRetryBtn/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /道錯題|bankRetryBtn/);
 });
 
 test('an image rejected for an expired session shows the reconnect gate', async () => {
@@ -1503,7 +1518,8 @@ test('an image rejected for an expired session shows the reconnect gate', async 
   app.location.hash = '#/session/chem/T3'; app.events.hashchange();
   await settle();
   assert.equal(app.saved.has('dse_quiz_sync_session_v1'), false);
-  assert.match(app.node('#app').innerHTML, /連接 GitHub 後.*連接已失效/s);
+  assert.match(app.node('#app').innerHTML, /class="login-page".*歡迎回來。.*連接已失效/s);
+  assert.doesNotMatch(app.node('#app').innerHTML, /question-example-mc|data-bank-image/);
   assert.equal(img.src, '');
 });
 
@@ -1548,10 +1564,11 @@ test('existing correct answers without a review plan do not break startup or OAu
     if (url.endsWith('/auth/exchange')) return { ok: true, json: async () => ({ sessionId: 'test-session' }) };
     if (options.method === 'PUT') backup = JSON.parse(options.body).data;
     return { ok: true, json: async () => options.method === 'GET' ? { data: null } : { savedAt: '2026-10-09T08:00:00Z' } };
-  }, { dse_quiz_sessions_v2: JSON.stringify(sessions) });
-  assert.match(app.node('#app').innerHTML, /Kyle 嘅錯題本/);
+  }, { dse_quiz_sessions_v2: JSON.stringify(sessions) }, false, false, Date.UTC(2026, 10, 11));
+  assert.match(app.node('#app').innerHTML, /Kyle，今天弄懂一點。/);
   await settle();
-  assert.deepEqual(backup.sessions, sessions);
+  assert.deepEqual(backup.sessions, [], 'historical October attempts are not current-cycle activity');
+  assert.deepEqual(backup.archive, sessions, 'canonical cycle partition preserves every historical exercise exactly');
   assert.equal(backup.reviewPlan['old-mc'].streak, 1, 'an early repeat does not advance the scheduled consolidation');
   assert.equal(backup.reviewPlan['old-sub'].streak, 1);
   assert.equal(backup.reviewPlan['old-sub'].interval, 15);
@@ -1562,7 +1579,7 @@ test('fresh visits open home while valid record and exercise links survive refre
   for (const hash of ['', '#/records', '#/session/chem/T3']) {
     const app = boot(hash);
     assert.equal(app.location.hash, hash || '#/');
-    assert.match(app.node('#app').innerHTML, hash.includes('/records') ? /做題記錄/ : hash.includes('/session') ? /示例課題/ : /Kyle 嘅錯題本/);
+    assert.match(app.node('#app').innerHTML, hash.includes('/records') ? /做題記錄/ : hash.includes('/session') ? /示例課題/ : /Kyle，今天弄懂一點。/);
     app.location.hash = '#/records?test=1';
     app.events.hashchange();
     assert.match(app.node('#app').innerHTML, /做題記錄/);
@@ -1580,7 +1597,7 @@ test('OAuth callback renders home immediately, then exchanges and syncs', async 
     return { ok: true, json: async () => options.method === 'GET' ? { data: null } : { savedAt: '2026-10-09T08:00:00Z' } };
   });
   assert.equal(app.location.hash, '#/');
-  assert.match(app.node('#app').innerHTML, /Kyle 嘅錯題本/);
+  assert.match(app.node('#app').innerHTML, /Kyle，今天弄懂一點。/);
   await settle();
   assert.equal(calls.length, 3);
   assert.equal(JSON.parse(calls[0].options.body).handoff, 'test-handoff');
@@ -1591,7 +1608,7 @@ test('OAuth callback renders home immediately, then exchanges and syncs', async 
 test('failed authorization and cancelled authorization leave a visible home page', async () => {
   const failed = boot('#/records?handoff=test');
   await settle();
-  assert.match(failed.node('#app').innerHTML, /Kyle 嘅錯題本/);
+  assert.match(failed.node('#app').innerHTML, /Kyle，今天弄懂一點。/);
   assert.match(failed.node('#syncStatus').textContent, /连接失败/);
   const cancelled = boot('#/records?sync=cancelled');
   assert.equal(cancelled.location.hash, '#/');
@@ -1605,14 +1622,15 @@ test('stalled authorization times out visibly instead of leaving a blank page', 
   app.timers.find(timer => timer.delay === 15000).fn();
   await settle();
   assert.match(app.node('#syncStatus').textContent, /逾時/);
-  assert.match(app.node('#app').innerHTML, /Kyle 嘅錯題本/);
+  assert.match(app.node('#app').innerHTML, /Kyle，今天弄懂一點。/);
 });
 
 test('private mode never renders the bundled question bank before authentication', () => {
   const app = boot('', undefined, {}, true);
-  assert.match(app.node('#app').innerHTML, /連接 GitHub 後/);
-  assert.doesNotMatch(app.node('#app').innerHTML, /題在庫/);
-  assert.equal(app.saved.get('dse_quiz_sessions_v2'), undefined);
+  assert.match(app.node('#app').innerHTML, /請登入以讀取私人題庫與批改卷/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /道錯題/);
+  assert.deepEqual(JSON.parse(app.saved.get('dse_quiz_sessions_v2')), []);
+  assert.deepEqual(JSON.parse(app.saved.get('dse_quiz_archive_v1')), []);
 });
 
 test('OAuth loads the private bank without copying questions into persistent storage', async () => {
@@ -1624,14 +1642,16 @@ test('OAuth loads the private bank without copying questions into persistent sto
     return { ok: true, json: async () => ({ data: null }) };
   }, {}, true);
   await settle();
-  assert.match(app.node('#app').innerHTML, /題在庫/);
+  assert.match(app.node('#app').innerHTML, /道錯題/);
   assert.equal(calls.find(c => c.url.endsWith('/bank')).options.headers.Authorization, 'Bearer test-session');
   assert.ok([...app.saved.keys()].every(key => !key.includes('bank')));
   app.location.hash = '#/records'; app.events.hashchange();
   app.events.storage({ key: 'dse_quiz_sync_session_v1', newValue: null });
   app.saved.delete('dse_quiz_sync_session_v1');
   app.location.hash = '#/practice/chem'; app.events.hashchange();
-  assert.match(app.node('#app').innerHTML, /連接 GitHub 後/);
+  assert.match(app.node('#app').innerHTML, /class="login-page".*歡迎回來。/s);
+  assert.match(app.node('#app').innerHTML, /href="https:\/\/sync\.example\.workers\.dev\/auth\/start" target="_blank" rel="noopener">連接私人資料<\/a>/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /道錯題|question-example-mc|data-bank-image/);
 });
 
 test('a denied private bank stays locked while existing records remain intact', async () => {
@@ -1687,8 +1707,12 @@ test('mathematics is selectable in the library, practice and random picker witho
   assert.match(app.node('#app').innerHTML, /下一個學科：生物/);
   app.location.hash = '#/practice/math/2022'; app.events.hashchange();
   assert.match(app.node('#app').innerHTML, /2022 年 · 數學 · 2 道錯題/);
-  assert.match(app.node('#app').innerHTML, /href="#\/practice\/bio"[^>]*上一個學科/);
-  assert.match(app.node('#app').innerHTML, /href="#\/practice\/chem\/2022"[^>]*下一個學科/);
+  const practice = app.node('#app').innerHTML;
+  assert.match(practice, /<nav class="subject-tabs" aria-label="選擇科目">/);
+  assert.deepEqual([...practice.matchAll(/class="subject-tab(?: on)?" href="([^"]+)"/g)].map(match => match[1]),
+    ['#/practice/chem/2022', '#/practice/bio', '#/practice/math/2022'],
+    'explicit subject tabs stay unique and keep the year only where that subject has it');
+  assert.match(practice, /class="subject-tab on" href="#\/practice\/math\/2022" aria-current="page"/);
   app.location.hash = '#/random'; app.events.hashchange();
   assert.equal((app.node('#app').innerHTML.match(/href="#\/session\/math\/__random__"/g) || []).length, 1);
   assert.match(app.node('#app').innerHTML, /2 題錯題中隨機抽 2 題/);
