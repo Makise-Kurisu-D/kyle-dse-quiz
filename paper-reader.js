@@ -34,8 +34,16 @@
     }
     function restoreAnchor() {
       if (!rows[current - 1] || !rows[current - 1].sheet.getBoundingClientRect) return;
-      var box = rows[current - 1].sheet.getBoundingClientRect();
-      scroll.scrollTop += box.top + anchorFraction * box.height - readingTop();
+      // Scrolling can pin the sticky toolbar and move the reading line itself.
+      // Settle that geometry before a scroll frame can select the preceding page.
+      for (var pass = 0; pass < 3; pass++) {
+        var box = rows[current - 1].sheet.getBoundingClientRect();
+        var delta = box.top + anchorFraction * box.height - readingTop();
+        if (Math.abs(delta) < 0.5) break;
+        var before = scroll.scrollTop;
+        scroll.scrollTop += delta;
+        if (scroll.scrollTop === before) break;
+      }
     }
     function measureToolbar() {
       if (options.toolbar.getBoundingClientRect) options.toolbar.parentElement.style.setProperty('--paper-toolbar-height', options.toolbar.getBoundingClientRect().height + 'px');
@@ -151,7 +159,8 @@
       var next = current;
       for (var i = 0; i < rows.length; i++) {
         var box = rows[i].sheet.getBoundingClientRect();
-        if (box.top <= top) next = i + 1;
+        // Native scroll offsets may round a restored page boundary by < 1px.
+        if (box.top <= top + 1) next = i + 1;
         else break;
       }
       if (scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2) next = manifest.pages;

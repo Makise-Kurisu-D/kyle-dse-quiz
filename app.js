@@ -3,6 +3,8 @@
  */
 (function () {
   'use strict';
+  // The public demo uses a namespaced adapter; production retains every legacy key.
+  var localStorage = window.QUIZ_STORAGE || window.localStorage;
   var activeUser = localStorage.getItem('dse_quiz_user_v1') || 'kyle';
   var subjectConfig = window.DSESubjects;
   var study = window.DSEStudy;
@@ -94,7 +96,7 @@
 
   function backupData() {
     return {
-      app: 'kyle-dse-quiz', version: 1, exportedAt: new Date().toISOString(),
+      app: 'kyle-dse-quiz', version: 2, userId: activeUser, exportedAt: new Date().toISOString(),
       sessions: sessions, archive: archive, drafts: drafts, reviewPlan: reviewPlan, aiReviews: aiReviews,
       cycle: localStorage.getItem(LS_CYCLE) || null
     };
@@ -145,22 +147,25 @@
     }).join(',') + '}';
     return JSON.stringify(value);
   }
+  function mergeSessions(a, b) {
+    var seen = new Set(), out = [];
+    (a || []).concat(b || []).forEach(function (s) {
+      if (!s || !Number.isFinite(s.t)) return;
+      var key = [s.t, s.subj, s.topic, JSON.stringify(s.results || {})].join('|');
+      if (!seen.has(key)) { seen.add(key); out.push(s); }
+    });
+    return out.sort(function (x, y) { return x.t - y.t; });
+  }
   function mergeData(remote) {
-    if (!remote || remote.app !== 'kyle-dse-quiz') return false;
-    function mergeSessions(a, b) {
-      var seen = {}, out = [];
-      (a || []).concat(b || []).forEach(function (s) {
-        if (!s || typeof s.t !== 'number') return;
-        var key = [s.t, s.subj, s.topic, JSON.stringify(s.results || {})].join('|');
-        if (!seen[key]) { seen[key] = true; out.push(s); }
-      });
-      return out.sort(function (x, y) { return x.t - y.t; });
-    }
-    sessions = mergeSessions(sessions, remote.sessions);
-    archive = mergeSessions(archive, remote.archive);
+    if (!remote || remote.app !== 'kyle-dse-quiz' || (remote.userId && remote.userId !== activeUser)) return false;
     var localCycle = Number(localStorage.getItem(LS_CYCLE) || 0);
     var remoteCycle = Number(remote.cycle || 0);
     var cycle = Math.max(localCycle, remoteCycle);
+    // A stale device may keep an archived submission in its current-cycle array.
+    // Merge once across both arrays, then derive the reporting partition, never the evidence.
+    var history = mergeSessions(archive.concat(sessions), (remote.archive || []).concat(remote.sessions || []));
+    sessions = cycle ? history.filter(function (s) { return s.t >= cycle; }) : mergeSessions(sessions, remote.sessions);
+    archive = cycle ? history.filter(function (s) { return s.t < cycle; }) : mergeSessions(archive, remote.archive);
     drafts = mergeDrafts(remote.drafts || {}, drafts);
     var plans = Object.assign({}, remote.reviewPlan || {});
     Object.keys(reviewPlan).forEach(function (id) {
@@ -323,8 +328,8 @@
     if (PRIVATE_BANK) { DATA = emptyBank(); bankLoaded = false; }
   }
   function passwordForm() {
-    return '<form id="passwordLoginForm" class="sync-login"><label for="syncUsername">使用者名稱</label>' +
-      '<input id="syncUsername" type="text" autocomplete="username" maxlength="32" value="' + (activeUser === 'yeelam' ? 'Yeelam' : 'Kyle') + '" required>' +
+    return '<form id="passwordLoginForm" class="sync-login"><label for="syncUsername">選擇你的學習手冊</label>' +
+      '<select id="syncUsername" autocomplete="username" required><option value="Kyle"' + (activeUser === 'kyle' ? ' selected' : '') + '>Kyle · 化學 / 生物 / 數學</option><option value="Yeelam"' + (activeUser === 'yeelam' ? ' selected' : '') + '>Yeelam · 數學 / M2 / 物理</option></select>' +
       '<label for="syncPassword">網站密碼</label>' +
       '<input id="syncPassword" type="password" autocomplete="current-password" maxlength="256" required placeholder="輸入密碼" aria-describedby="syncStatus">' +
       '<button id="passwordLoginBtn" class="btn btn-primary" type="submit">登入並自動同步</button></form>' +
@@ -444,20 +449,15 @@
     $('#app').innerHTML = '<section class="page"><header class="page-head"><h1 class="page-title">錯題庫</h1></header>' +
       bankStatusHtml() + '<p class="review-note">題庫載入後會自動顯示，你也可以先查看做題記錄或批改卷。</p>' +
       '<a class="btn btn-ghost" href="#/">返回主頁</a> <a class="btn btn-ghost" href="#/records">做題記錄</a> ' +
-      '<a class="btn btn-ghost" href="#/library/papers">紅筆批改卷</a></section>';
+      '<a class="btn btn-ghost" href="#/library/papers">批改卷</a></section>';
     bindBankRetry();
   }
   function renderBankGate() {
-    $('#app').innerHTML = '<section class="home"><div class="hero">' +
-      '<div class="hero-kicker">DSE · ' + SUBJECT_ORDER.map(function (code) { return SUBJECT_META[code].name; }).join(' / ') + '</div><h1 class="hero-title">' + (activeUser === 'yeelam' ? 'Yeelam' : 'Kyle') + ' 嘅錯題本</h1>' +
-      '<p class="hero-sub">' + (PASSWORD_AUTH ? '輸入密碼即可讀取你的錯題庫、原題圖片和做題記錄。' : '連接 GitHub 後即可讀取你的錯題庫和原題圖片。') + '</p>' +
-      '<p class="review-note" id="syncStatus" role="status" aria-live="polite">' + esc(bankMessage || syncMessage || '你的做題記錄會保留。') + '</p>' +
-      (SYNC_API ? (PASSWORD_AUTH ? passwordForm() : '<a class="btn btn-primary" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">連接 GitHub</a>') : '') +
-      (localStorage.getItem(LS_SYNC_SESSION) ? '<button class="btn btn-ghost" id="bankRetryBtn" type="button">重新載入</button>' : '') +
-      '<a class="btn btn-ghost" href="#/records">做題記錄</a></div></section>';
+    $('#app').innerHTML = '<section class="login-page"><div class="login-editorial"><span class="eyebrow">拾題 / A PERSONAL STUDY NOTEBOOK</span><h1>把不懂的，<br>慢慢弄懂。</h1><p>不只是重做一遍。<br>記下當時的思路，找出錯因，<br>在下次遇到時真正答得出來。</p><ol class="login-path"><li><span>01</span>獨立作答</li><li><span>02</span>讀懂錯因</li><li><span>03</span>隔一段時間，再試一次</li></ol><span class="login-edition">為香港 DSE · FORM 6 而設</span></div>' +
+      '<div class="login-sheet"><span class="eyebrow">打開你的學習手冊</span><h2>歡迎回來。</h2><p>兩個帳戶各自保留科目、草稿與記錄。</p><p class="review-note" id="syncStatus" role="status" aria-live="polite">' + esc(bankMessage || syncMessage || '請登入以讀取私人題庫與批改卷。') + '</p>' +
+      (SYNC_API ? (PASSWORD_AUTH ? passwordForm() : '<a class="btn btn-primary" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">連接私人資料</a>') : '<p>登入服務暫未設定。</p>') +
+      '<div class="login-privacy">私人題庫只在驗證後載入。密碼不會保存在此裝置。</div><a class="text-link" href="./demo/">先看看模擬演示 ↗</a></div></section>';
     bindPasswordForm();
-    var retry = $('#bankRetryBtn');
-    if (retry) retry.addEventListener('click', function () { loadBank(); });
   }
   function hydratePrivateImages(root) {
     if (!PRIVATE_BANK || !bankLoaded) return;
@@ -532,6 +532,7 @@
   }
   window.addEventListener('online', function () { loadBank(); syncNow(true); });
   window.addEventListener('focus', function () {
+    ensureCycle();
     if (localStorage.getItem(LS_SYNC_SESSION)) { loadBank(); syncNow(true); }
   });
   window.addEventListener('storage', function (event) {
@@ -550,27 +551,24 @@
     return CYCLE_ANCHOR + Math.floor((ts - CYCLE_ANCHOR) / CYCLE_MS) * CYCLE_MS;
   }
   function cycleEndOf(ts) { return cycleStartOf(ts) + CYCLE_MS; }
-  function allSessions() { return archive.concat(sessions); }
+  function allSessions() { return mergeSessions(archive, sessions); }
 
-  // 雙週換輪：舊 session 歸檔（熱力圖保留），當前進度與草稿清零（題庫保留）
+  // 雙週只重算報表；草稿、待確認提交與長期複習證據完整保留。
   function ensureCycle() {
     var cur = cycleStartOf(Date.now());
     var saved = parseInt(localStorage.getItem(LS_CYCLE) || '0', 10);
-    if (!saved) {
+    if (!saved || saved < cur) {
+      // Legacy backups can contain history without a cycle key. Normalize those as well,
+      // retaining the original session objects and every non-report learning record.
+      var changed = !!saved || sessions.some(function (s) {return s.t < cur;}) || archive.some(function (s) {return s.t >= cur;});
+      var history = allSessions();
+      archive = history.filter(function (s) { return s.t < cur; });
+      sessions = history.filter(function (s) { return s.t >= cur; });
+      localStorage.setItem(LS_ARCHIVE, JSON.stringify(archive));
+      localStorage.setItem(LS_SESS, JSON.stringify(sessions));
       localStorage.setItem(LS_CYCLE, String(cur));
-      return false;
-    }
-    if (saved < cur) {
-      if (sessions.length) {
-        archive = archive.concat(sessions);
-        localStorage.setItem(LS_ARCHIVE, JSON.stringify(archive));
-      }
-      sessions = [];
-      localStorage.setItem(LS_SESS, JSON.stringify([]));
-      localStorage.setItem(LS_CYCLE, String(cur));
-      syncRevision++;
-      scheduleSync();
-      return true;
+      if (changed) {syncRevision++;scheduleSync();}
+      return changed;
     }
     return false;
   }
@@ -738,9 +736,9 @@
     var parts = h.split('/').filter(Boolean);
     var view = parts[0] || 'home';
     if (view !== 'drill') drillSelection = null;
-    renderArchiveBackdrop(view === 'library' && parts[1] === 'books');
+    clearArchiveBackdrop();
     if (view !== 'library') releasePaper();
-    $all('.rail-item,.tab-item').forEach(function (a) {
+    $all('.desk-link,.tab-item').forEach(function (a) {
       a.classList.toggle('active', a.dataset.route === (view === 'library' && parts[1] === 'papers' ? 'papers' : view));
     });
     if (preserveScroll !== true) {
@@ -760,7 +758,9 @@
     if (view === 'drill') return renderDrill(parts[1]);
     if (view === 'session') {
       if (parts[2] === '__today__') return renderToday(parts[1], 5);
-      renderSession(parts[1], decodeURIComponent(parts[2] || ''), undefined, parts[3]);
+      var topic;
+      try { topic = decodeURIComponent(parts[2] || ''); } catch (_) { topic = ''; }
+      renderSession(parts[1], topic, undefined, parts[3]);
       return;
     }
     if (view === 'records') return renderRecords();
@@ -781,115 +781,60 @@
   }
 
   /* ---------------- 主頁 ---------------- */
+  function subjectTabs(base, selected, year) {
+    return '<nav class="subject-tabs" aria-label="選擇科目">' + SUBJECT_ORDER.map(function (code) {
+      return '<a class="subject-tab' + (code === selected ? ' on' : '') + '" href="' + base + code + (year && year !== 'all' && itemsOf(code).some(function (it) {return String(it.year) === year;}) ? '/' + encodeURIComponent(year) : '') + '"' + (code === selected ? ' aria-current="page"' : '') + '>' + SUBJECT_META[code].icon + SUBJECT_META[code].name + '</a>';
+    }).join('') + '</nav>';
+  }
   function homeMarkup() {
-    var latest = latestMap();
-    var totalItems = SUBJECT_ORDER.reduce(function (n, c) { return n + itemsOf(c).length; }, 0);
-    var doneIds = {}; sessions.forEach(function (s) {
-      Object.keys(s.results).forEach(function (id) { doneIds[id] = s.results[id]; });
-    });
-    var conquered = Object.keys(doneIds).filter(function (id) {
-      var r = doneIds[id];
-      return r.ok === true && (r.tot ? r.marks / r.tot >= 1 : true);
-    }).length;
-    var due = Math.max(0, totalItems - conquered);
-
-    // 推薦課題：全部科目合併，按失分排序，取仍有未清錯題的前三
-    var recs = [];
-    SUBJECT_ORDER.forEach(function (code) {
-      var st = topicStats(code);
-      Object.keys(st).forEach(function (t) {
-        recs.push({
-          code: code, topic: t, marks: st[t].marks, n: st[t].n,
-          due: dueCount(code, t, latest)
-        });
-      });
-    });
-    recs.sort(function (a, b) { return (b.due > 0 ? b.marks : -1) - (a.due > 0 ? a.marks : -1) || b.marks - a.marks; });
-    var top = recs.slice(0, 3);
-
     var historyIndex = window.DSELibrary.indexHistory(allSessions());
-    var mastered = SUBJECT_ORDER.reduce(function (n, code) {
-      return n + itemsOf(code).filter(function (item) { return historyIndex[item.id] && historyIndex[item.id].state === 'mastered'; }).length;
-    }, 0);
-    var remainingDays = Math.ceil((cycleEndOf(Date.now()) - Date.now()) / DAY_MS);
     var mode = compactStudy() ? 'mc' : 'all';
-    var todayDue = todayRows('all', mode).filter(function (r) { return r.due; }).length;
+    var rows = todayRows('all', mode), todayDue = rows.filter(function (r) {return r.due;}).length;
     var resume = taskHref(), savedDraft = !resume && study.draftTask(drafts, DATA);
     if (savedDraft) resume = savedDraft.href;
-    return (
-      '<section class="home"><div class="home-stage">' +
-        '<div class="hero">' +
-          '<div class="hero-kicker">' + (activeUser === 'yeelam' ? 'Yeelam' : 'Kyle') + ' 嘅錯題本 / DSE</div>' +
-          '<h1 class="hero-title"><span class="hero-en">REVISIT</span><span class="hero-zh">從錯題，再出發。</span></h1>' +
-          '<div class="preview-today-label">YOUR NEXT MOVE <span>／ ' + (compactStudy() ? '輕量複習' : '今日複習') + '</span></div>' +
-          '<div class="preview-due"><strong>' + (bankLoaded ? todayDue : '—') + '</strong><span>題到期<br><small>READY TO REVIEW</small></span></div>' +
-          '<p class="preview-review-hint">' + (compactStudy() ? '手機先看概念、練選擇題；長答可在電腦繼續。' : '選擇適合本次的題型與題數，完成一部分也可以儲存。') + '</p>' +
-          '<a class="continue-command" id="homeReviewStart" href="#/today/all/5?kind=' + mode + '"><b aria-hidden="true">START</b><span>' + (compactStudy() ? '開始選擇題輕練習' : '開始今日複習') + ' ↗</span></a>' +
-          (resume ? '<a class="btn btn-ghost home-resume" id="resumeStudy" href="' + esc(resume) + '">繼續未完成的作答 →</a>' : '') +
-          '<div class="home-quick-links"><a class="btn btn-ghost" href="#/library/books/concepts">概念回顧</a><a class="btn btn-ghost" href="#/library/papers">歷年試卷</a><a class="btn btn-ghost" href="#/records">學習數據</a></div>' +
-          '<div class="home-info" role="group" aria-label="學習與同步資訊">' +
-          '<p class="hero-sub hero-bubble bubble-intro">每次弄懂一點，都會留下進步。完成今天這一小步就好。</p>' +
-          '<p class="review-note hero-bubble bubble-sync" id="syncStatus" role="status" aria-live="polite"' + (syncMessage ? '' : ' hidden') + '>' + esc(syncMessage) + '</p>' +
-          bankStatusHtml() +
-          '<p class="home-bank-total hero-bubble bubble-bank"><b>' + (bankLoaded ? totalItems : '—') + '</b> 題在庫<span class="bank-privacy">題庫及原卷僅供登入後讀取</span></p>' +
-          '</div>' +
-        '</div>' +
-        '<div class="tile-grid">' +
-          tile('#/practice/' + SUBJECT_ORDER[0], '<span class="persona-icon persona-icon-practice" aria-hidden="true"></span>', '開始練習', '按課題逐個擊破', 'tile-blue') +
-          tile('#/library/books', '<span class="persona-icon persona-icon-library" aria-hidden="true"></span>', '錯題庫', '歸納原答案、錯因與正解', 'tile-gold') +
-          tile('#/library/papers', '<span class="persona-icon persona-icon-papers" aria-hidden="true"></span>', '紅筆批改卷', '按年份回顧原答與批注', 'tile-green') +
-          tile('#/records', '<span class="persona-icon persona-icon-records" aria-hidden="true"></span>', '做題記錄', '查看歷次練習與雙周進度', 'tile-gold') +
-          tile('#/random', '<span class="persona-icon persona-icon-random" aria-hidden="true"></span>', '隨機十題', SUBJECT_ORDER.map(function (code) { return SUBJECT_META[code].name; }).join('／') + '十題速測', 'tile-green') +
-        '</div></div>' +
-        '<div class="home-details" id="homeDetails">' + todayMarkup() + '<div class="home-stat-strip">' +
-          '<div>本輪待複習<strong class="c-red">' + (bankLoaded ? due : '—') + '<small>題</small></strong></div>' +
-          '<div>本輪已全對<strong class="c-green">' + conquered + '<small>題</small></strong></div>' +
-          '<div>長期已掌握<strong>' + (bankLoaded ? mastered : '—') + '<small>題</small></strong></div>' +
-          '<div>距離下一輪<strong>' + remainingDays + '<small>天</small></strong></div>' +
-        '</div>' +
-        '<div class="hero-cycle" id="heroCycle">' +
-          '<span>下輪開始：<b id="cycleTimer">—</b></span>' +
-          '<span class="cycle-note">本輪進度重新計算；歷史、草稿與長期掌握狀態保留。北京時間。</span>' +
-        '</div>' +
-
-        '<div class="home-sec">' +
-          '<div class="home-sec-h"><h2><span class="persona-icon persona-icon-practice" aria-hidden="true"></span> 建議優先複習</h2><a class="link" href="#/practice/' + SUBJECT_ORDER[0] + '">全部課題 →</a></div>' +
-          '<div class="rec-grid">' +
-            (bankLoaded ? top.map(function (r) {
-              var pct = pctOf(r.code, r.marks);
-              return '<a class="rec-card" href="#/session/' + r.code + '/' + encodeURIComponent(r.topic) + '">' +
-                '<div class="rec-top"><span class="rec-subj">' + SUBJECT_META[r.code].icon + ' ' +
-                  esc(SUBJECT_META[r.code].name) + '</span>' +
-                  (r.due ? '<span class="rec-due">待清 ' + r.due + '</span>' : '<span class="rec-ok">已清 ✔</span>') +
-                '</div>' +
-                '<div class="rec-name">' + esc(r.topic + ' ' + topicName(r.code, r.topic)) + '</div>' +
-                '<div class="rec-bar"><i style="width:' + pct + '"></i></div>' +
-                '<div class="rec-meta">' + r.n + ' 題錯 · 失分 ' + r.marks + ' 分 · 佔該科 ' + pct + '</div>' +
-              '</a>';
-            }).join('') : '<p class="review-note">錯題庫載入後顯示推薦課題。</p>') +
-          '</div>' +
-        '</div></div>' +
-      '</section>');
+    var top = [];
+    SUBJECT_ORDER.forEach(function (code) {
+      var stats = topicStats(code);
+      Object.keys(stats).forEach(function (topic) {
+        var pending = itemsOf(code).filter(function (it) {return it.topic === topic && (!historyIndex[it.id] || historyIndex[it.id].state !== 'mastered');}).length;
+        if (pending) top.push({code:code, topic:topic, pending:pending, lost:stats[topic].marks, known:itemsOf(code).filter(function(it){return it.topic===topic;}).every(function(it){return Number.isFinite(it.lost);})});
+      });
+    });
+    top.sort(function(a,b){return b.lost-a.lost || b.pending-a.pending;});
+    var count = Math.min(5, rows.length), name = activeUser === 'yeelam' ? 'Yeelam' : 'Kyle';
+    var nextHref = resume || (count ? '#/today/all/5?kind=' + mode : '#/library/books');
+    var last = allSessions().slice().sort(function(a,b){return b.t-a.t;})[0];
+    var weekday = ['星期日','星期一','星期二','星期三','星期四','星期五','星期六'][new Date(Date.now()+BEIJING_OFFSET_MS).getUTCDay()];
+    return '<section class="home notebook-home">' +
+      '<header class="home-heading"><div><span class="eyebrow">YOUR DAILY PAGE / FORM 6</span><h1>' + name + '，今天弄懂一點。</h1><p>不用一次做完。從值得重溫的一題開始。</p></div><div class="date-stamp"><span>' + esc(fmtDate(Date.now())) + '</span><strong>' + weekday + '</strong><small>北京時間 · UTC+8</small></div></header>' +
+      '<div class="home-status">' + bankStatusHtml() + '<p id="syncStatus" role="status" aria-live="polite"' + (syncMessage ? '' : ' hidden') + '>' + esc(syncMessage) + '</p></div>' +
+      '<div class="daily-spread"><section class="next-page" aria-labelledby="nextTitle"><div class="section-index"><span>01 / 下一步</span><span class="status-pill">' + (resume ? '有未完成草稿' : todayDue ? todayDue + ' 題到期' : '按自己的節奏') + '</span></div>' +
+      '<h2 id="nextTitle">' + (resume ? '接著上次的思路。' : count ? '先從 ' + count + ' 題開始。' : '先翻一頁，找回思路。') + '</h2>' +
+      '<p>' + (resume ? '未提交的答案已保存在這部裝置；登入後會合併較新的雲端草稿。' : count ? (compactStudy() ? '一小組選擇題，適合零碎時間。' : '一小組獨立練習，作答後再核對。') + (todayDue ? '優先安排已到期的題目。' : '目前沒有到期題，仍可自主練習。') : '題庫準備好後，這裡會安排適合你的練習。不會把閱讀當成掌握。') + '</p>' +
+      '<a class="btn btn-primary next-action" id="' + (resume ? 'resumeStudy' : 'homeReviewStart') + '" href="' + esc(nextHref) + '">' + (resume ? '繼續未完成作答' : count ? '開始今日複習' : '打開錯題本') + '<span aria-hidden="true">↗</span></a>' +
+      '<small class="next-footnote">隨時暫停 · 自動存草稿 · 未完成題不計零分</small></section>' +
+      '<aside class="study-margin"><span class="eyebrow">另一種溫習方式</span><h2>先回憶，<br>再翻答案。</h2><p>不方便作答的時候，也可以把概念和原卷讀清楚。</p><a href="#/library/books/concepts"><span>概念便箋<small>從知識點喚回思路</small></span><span aria-hidden="true">→</span></a><a href="#/library/papers"><span>翻閱批改卷<small>對照原答與老師批注</small></span><span aria-hidden="true">→</span></a></aside></div>' +
+      todayMarkup() +
+      '<section class="home-subject-section"><div class="section-heading"><h2><span>02</span> 我的科目</h2><a class="link" href="#/library/books/search">搜尋錯題 ↗</a></div><div class="subject-shelf">' + SUBJECT_ORDER.map(function(code,i){
+        var pool = itemsOf(code), mastered = pool.filter(function(it){return historyIndex[it.id] && historyIndex[it.id].state === 'mastered';}).length;
+        return '<article class="subject-folder subject-' + code + '"><div class="folder-top">' + SUBJECT_META[code].icon + '<span>0' + (i+1) + '</span></div><h3>' + esc(SUBJECT_META[code].name) + '</h3><p>' + (!bankLoaded ? '題庫載入中…' : pool.length ? pool.length + ' 道錯題 · ' + (pool.length-mastered) + ' 題待複習／鞏固' : '尚未收錄題目') + '</p><div class="folder-actions"><a href="#/practice/' + code + '">課題練習 ↗</a><a href="#/library/books/' + code + '">翻錯題本 →</a></div></article>';
+      }).join('') + '</div></section>' +
+      '<section class="home-priorities"><div class="section-heading"><h2><span>03</span> 值得再看一次</h2><span class="subtle">按已核實原卷失分排序</span></div><div class="priority-list">' + (top.slice(0,3).map(function(r,i){
+        return '<a class="priority-row" href="#/library/books/' + r.code + '/' + encodeURIComponent(r.topic) + '"><span class="priority-number">0' + (i+1) + '</span><span class="priority-copy"><small>' + esc(SUBJECT_META[r.code].name + ' / ' + r.topic) + '</small><strong>' + esc(topicName(r.code,r.topic)) + '</strong></span><span class="priority-meta">' + r.pending + ' 題待複習' + (r.known ? '<small>原卷失分 ' + r.lost + ' 分</small>' : '') + '</span><span aria-hidden="true">↗</span></a>';
+      }).join('') || '<p class="empty-note">' + (bankLoaded ? '目前沒有需要鞏固的課題。可到錯題本自主重溫，或閱讀原卷。' : '題庫載入後會顯示需要鞏固的課題。') + '</p>') + '</div></section>' +
+      '<div class="learning-footnote"><span>' + (last ? '上次完成練習：' + esc(fmtDateTime(last.t)) + ' · <a href="#/records">回看記錄 →</a>' : '每次提交才會留下練習證據；閱讀與筆記不計作答。') + '</span><a href="#/records">雙周進度與同步設定 →</a></div></section>';
   }
   function clearArchiveBackdrop() {
     var backdrop = $('#archiveBackdrop');
     if (backdrop) { backdrop.hidden = true; backdrop.innerHTML = ''; }
   }
-  function renderArchiveBackdrop(active) {
-    if (!active || (PRIVATE_BANK && !localStorage.getItem(LS_SYNC_SESSION))) return clearArchiveBackdrop();
-    var backdrop = $('#archiveBackdrop');
-    if (!backdrop) return;
-    // Reuse the current home view without duplicate IDs, live regions or handlers.
-    // The inert, aria-hidden layer is memory-only and is cleared on exit/logout.
-    backdrop.innerHTML = '<div class="app archive-home-content">' + homeMarkup()
-      .replace(/\sid="[^"]*"/g, '').replace(/\saria-live="[^"]*"/g, '')
-      .replace(/\srole="status"/g, '') + '</div>';
-    backdrop.hidden = false;
+  function renderArchiveBackdrop() {
+    // The notebook has one reading surface, never a duplicate home or decorative private-data layer.
+    clearArchiveBackdrop();
   }
   function renderHome() {
     $('#app').innerHTML = homeMarkup();
     bindBankRetry();
-    startCycleTimer();
     var subject = $('#todaySubject'), count = $('#todayCount');
     function updateToday() {
       var kind = $('#todayKind').value || (compactStudy() ? 'mc' : 'all');
@@ -904,14 +849,8 @@
   }
   function todayRows(code, kind) { return window.DSELibrary.dailyCandidates(DATA, allSessions(), reviewPlan, code, Date.now()).filter(function (r) { return !kind || kind === 'all' || r.item.kind === kind; }); }
   function todayMarkup() {
-    var rows = todayRows('all'), due = rows.filter(function (r) { return r.due; }).length;
-    return '<section class="panel today-review" aria-label="今日複習"><h2>今日複習</h2>' +
-      '<p id="todaySummary" role="status">' + (bankLoaded ? due + ' 題到期 · 本次 ' + Math.min(5, rows.length) + ' 題（北京時間）' : '題庫尚未載入') + '</p>' +
-      '<p class="review-note">優先安排到期、答對後回退和連續答錯的題目，再參考已核實原卷失分。</p>' +
-      '<div class="today-controls"><label>科目 <select id="todaySubject"><option value="all">全部科目</option>' + SUBJECT_ORDER.map(function (c) { return '<option value="' + c + '">' + SUBJECT_META[c].name + '</option>'; }).join('') + '</select></label>' +
-      '<label>題型 <select id="todayKind"><option value="mc">選擇題輕練習</option><option value="all">混合練習</option><option value="sub">大題專注練習</option></select></label>' +
-      '<label>題數 <select id="todayCount"><option value="1">1 題</option><option value="3">3 題</option><option value="5" selected>5 題</option><option value="10">10 題</option><option value="15">15 題</option></select></label>' +
-      '<a class="btn btn-primary" id="todayStart" href="#/today/all/5">開始今日複習</a></div></section>';
+    return '<details class="today-review"><summary><span><b>自己安排一小組</b><small>選科目、題型與題數，不受裝置限制</small></span><span aria-hidden="true">＋</span></summary><div class="today-inner"><div class="today-controls"><label>科目<select id="todaySubject"><option value="all">全部科目</option>' + SUBJECT_ORDER.map(function(c){return '<option value="' + c + '">' + SUBJECT_META[c].name + '</option>';}).join('') + '</select></label>' +
+      '<label>題型<select id="todayKind"><option value="mc">選擇題</option><option value="all">混合練習</option><option value="sub">主觀題</option></select></label><label>題數<select id="todayCount"><option value="1">1 題</option><option value="3">3 題</option><option value="5" selected>5 題</option><option value="10">10 題</option><option value="15">15 題</option></select></label><a class="btn btn-primary" id="todayStart" href="#/today/all/5">開始這一組 ↗</a></div><p id="todaySummary" role="status"></p><p class="review-note">依到期、回退及未滿分記錄安排，再參考已核實原卷失分。數量不足時只取現有題目。</p></div></details>';
   }
   function renderToday(code, limit) {
     code = SUBJECT_ORDER.indexOf(code) >= 0 ? code : 'all';
@@ -977,6 +916,11 @@
     if (parts[0] === 'books') return window.DSELibrary.render(parts.slice(1), {
       root: $('#app'), scrollRoot: $('#contentScroll'), userId: activeUser, data: DATA, history: allSessions(), cycleStart: cycleStartOf(Date.now()), loaded: bankLoaded,
       normalize: norm, formatDate: fmtDateTime, hydrate: hydratePrivateImages, gradeMetrics: paperGradeMetrics, tags: confirmedTags,
+      paperHref: function (code, item) {
+        if (!item || !/^20\d{2}$/.test(String(item.year))) return '';
+        if (item.paper_id && !/^[a-z0-9][a-z0-9-]{0,79}$/.test(item.paper_id)) return '';
+        return '#/library/papers/' + code + '/' + item.year + (item.paper_id ? '/' + item.paper_id : '') + '?mistake=' + encodeURIComponent(item.qref || '');
+      },
       aiHtml: function (id) { var row=latestAI(id);return row ? '<details class="ai-saved"><summary>已確認 AI 輔評 · '+esc(fmtDateTime(row.confirmedAt))+'</summary><p>與原卷判分分開保存 · 標籤：'+esc((row.tags||[]).join('、')||'未選擇')+'</p>'+aiFeedbackHtml(row.feedback)+'</details>' : ''; },
       catalog: function () {
         var session = localStorage.getItem(LS_SYNC_SESSION);
@@ -1025,7 +969,7 @@
           '<span class="library-hub-action">按課題查看錯題 <span aria-hidden="true">↗</span></span></a>' +
         '<a class="library-hub-card library-hub-papers" href="#/library/papers">' +
           '<span class="library-hub-icon" aria-hidden="true"><span class="persona-icon persona-icon-papers" aria-hidden="true"></span></span><span class="library-hub-kicker">按年份回顧</span>' +
-          '<h2>紅筆批改卷</h2><p class="library-hub-description">回到原卷看批注，再用成績與等級差距找到下一步的目標。</p>' +
+          '<h2>批改卷</h2><p class="library-hub-description">回到原卷看批注，再用成績與等級差距找到下一步的目標。</p>' +
           '<div class="library-hub-stats"><span><b id="libraryPaperCount">—</b><small>已發布批改卷</small></span>' +
             '<span><b id="libraryPaperSubjects">—</b><small>收錄科目</small></span>' +
             '<span><b id="libraryNewestYear">—</b><small>最新試題年份</small></span></div>' +
@@ -1116,7 +1060,7 @@
       return esc(c.label) + ' ' + c.earned + '/' + c.total;
     }).join(' · ') : '';
     return '<a class="paper-year" href="#/library/papers/' + subject + '/' + year + (detail.paper_id ? '/' + detail.paper_id : '') + '">' +
-      '<span class="paper-year-heading"><strong>' + esc(info.label) + '</strong><small>' + esc(info.mock ? '紅筆批改卷' : detail.title || (metrics ? assessment.scope : '紅筆批改卷')) + '</small></span>' +
+      '<span class="paper-year-heading"><strong>' + esc(info.label) + '</strong><small>' + esc(info.mock ? '批改卷' : detail.title || (metrics ? assessment.scope : '批改卷')) + '</small></span>' +
       '<span class="paper-year-score">' + score + '</span><span class="paper-grade-gaps">' + gaps + '</span>' +
       '<span class="paper-year-arrow" aria-hidden="true">→</span>' +
       '<span class="paper-year-foot">' + (components ? components + ' · ' : '') + (Number.isInteger(detail.pages) ? detail.pages + ' 頁 · ' : '') +
@@ -1193,7 +1137,7 @@
   }
   function renderPaperSubjects() {
     $('#app').innerHTML = '<section class="page library-page">' +
-      '<header class="page-head"><div><h1 class="page-title"><span class="persona-icon persona-icon-papers" aria-hidden="true"></span> 紅筆批改卷</h1>' +
+      '<header class="page-head"><div><h1 class="page-title"><span class="persona-icon persona-icon-papers" aria-hidden="true"></span> 批改卷</h1>' +
       '<p class="page-sub">先選科目，再選年份；只會列出已發布的批改版本。</p></div>' +
       '<a class="btn btn-ghost" href="#/library">← 返回資料入口</a></header>' +
       '<div class="library-choices">' + SUBJECT_ORDER.map(function (code) {
@@ -1207,8 +1151,8 @@
     paperYear = '';
     $('#app').innerHTML = '<section class="page library-page">' +
       '<header class="page-head"><div><h1 class="page-title">' + SUBJECT_META[subject].icon + ' ' +
-        SUBJECT_META[subject].name + '紅筆批改卷</h1>' +
-      '<p class="page-sub">比較各年得分、參考等級與升級空間，再打開批改卷。</p></div>' +
+        SUBJECT_META[subject].name + '批改卷</h1>' +
+      '<p class="page-sub">翻回原卷，對照批注與當時的作答。原卷得分不會被重做成績取代。</p></div>' +
       '<a class="btn btn-ghost" href="#/library/papers">← 返回科目</a></header>' +
       '<div class="panel"><p class="review-note" id="paperYearsStatus" role="status" aria-live="polite">正在載入年份…</p>' +
         '<div class="paper-years" id="paperYears"></div><p class="library-note">參考等級不是官方成績；分差按整數卷面分計算，百分點表示與分界的距離。僅卷一的成績不代表全科。</p></div></section>';
@@ -1283,7 +1227,7 @@
       initialPosition: initialPosition,
       onPosition: saveReaderPosition,
       onMistake: function (target) {renderPaperReview(target);},
-      title: SUBJECT_META[subject].name + ' ' + year + ' 年紅筆批改卷',
+      title: SUBJECT_META[subject].name + ' ' + year + ' 年批改卷',
       loadPage: function (page) { return readerPage(base + '/pages/' + manifest.version + '/' + page, session); },
       loadThumbnails: function () { return readerPage(base + '/thumbnails/' + manifest.version, session); },
       onPage: function (page, url) {
@@ -1451,17 +1395,15 @@
   }
   function startCycleTimer() {
     clearInterval(cycleTimerId);
-    var el = $('#cycleTimer');
     function tick() {
-      var remain = cycleEndOf(Date.now()) - Date.now();
-      if (remain <= 0) {
-        clearInterval(cycleTimerId);
-        if (ensureCycle()) {
-          toast('新嘅雙週開始，進度已重置！');
-          route();
-        }
-        return;
+      // Test the stored cycle before computing the next future boundary (also handles sleeping tabs).
+      if (ensureCycle()) {
+        toast('新雙周已開始；報表已更新，未完成草稿與長期記錄保留。');
+        // Refresh reporting surfaces only; never unmount an exercise or a paper being read.
+        var view = (location.hash.split('?')[0] || '#/').split('/')[1];
+        if (!view || view === 'records') route(true);
       }
+      var el = $('#cycleTimer'), remain = cycleEndOf(Date.now()) - Date.now();
       if (el) el.textContent = cycleText(remain);
     }
     tick();
@@ -1470,7 +1412,7 @@
   function tile(href, ico, title, desc, cls) {
     return '<a class="tile ' + cls + '" href="' + href + '">' +
       '<div class="tile-ico">' + ico + '</div>' +
-      '<div class="tile-body"><div class="tile-title"><span class="tile-en" aria-hidden="true">' + ({ '開始練習': 'TOPICS', '錯題庫': 'ARCHIVE', '紅筆批改卷': 'PAPERS', '做題記錄': 'RECORDS', '隨機十題': 'RANDOM' }[title] || '') + '</span><span class="tile-cn">' + title + '</span></div>' +
+      '<div class="tile-body"><div class="tile-title"><span class="tile-en" aria-hidden="true">' + ({ '開始練習': 'TOPICS', '錯題庫': 'ARCHIVE', '批改卷': 'PAPERS', '做題記錄': 'RECORDS', '隨機十題': 'RANDOM' }[title] || '') + '</span><span class="tile-cn">' + title + '</span></div>' +
       '<div class="tile-desc">' + desc + '</div></div>' +
       '<div class="tile-arrow">→</div></a>';
   }
@@ -1523,21 +1465,19 @@
     var catalog = null, requestId = paperRequest;
     $('#app').innerHTML = '<section class="page practice-inventory">' +
       '<header class="page-head"><div><h1 class="page-title">課題練習</h1><p class="page-sub">先選年份，再揀課題開始練習。</p></div>' +
-      '<div class="inventory-switch" aria-label="學科切換"><a class="shoulder-link" href="' + switchHref(previous) + '" aria-label="上一個學科：' + SUBJECT_META[previous].name + '">‹ LB</a>' +
-      '<strong>' + SUBJECT_META[code].icon + ' ' + SUBJECT_META[code].name + '</strong><a class="shoulder-link" href="' + switchHref(next) + '" aria-label="下一個學科：' + SUBJECT_META[next].name + '">RB ›</a></div>' +
-      '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
-      '<div class="inventory-layout"><section class="inventory-years" aria-label="選擇練習年份"><h2>YEAR SELECT <span>/ 選擇年份</span></h2>' +
-      '<div class="year-list" id="practiceYears"></div><p class="year-grade-note">LV＝DSE 試卷參考等級（非官方估算）；HP＝原卷分數；SP＝錯題數。缺少適用分界時顯示「—」；單卷不評全科等級。</p>' +
+      '</header>' + subjectTabs('#/practice/', code, selected) +
+      '<div class="inventory-layout"><section class="inventory-years" aria-label="選擇練習年份"><h2>選擇年份</h2>' +
+      '<div class="year-list" id="practiceYears"></div><p class="year-grade-note">原卷分數與練習成績分開。參考等級非官方評級；缺少完整分界不作估算。</p>' +
       '<p class="year-grade-note" id="practiceGradeStatus" role="status">正在核對原卷成績…</p></section>' +
-      '<section class="inventory-topics" aria-label="所選年份的課題"><div class="practice-topic-heading"><h2>TOPIC LIST <span>/ 選擇課題</span></h2>' +
-      '<span>' + String(rows.length).padStart(2, '0') + ' TOPICS</span></div><p class="practice-selection" role="status">' + yearLabel + ' · ' + SUBJECT_META[code].name + ' · ' + filtered.length + ' 道錯題</p>' +
+      '<section class="inventory-topics" aria-label="所選年份的課題"><div class="practice-topic-heading"><h2>選擇課題</h2>' +
+      '<span>' + String(rows.length).padStart(2, '0') + ' 個課題</span></div><p class="practice-selection" role="status">' + yearLabel + ' · ' + SUBJECT_META[code].name + ' · ' + filtered.length + ' 道錯題</p>' +
       '<div class="topic-list" id="practiceTopics">' + rows.map(function (row) {
         return '<a class="topic-card practice-topic' + (row.due ? '' : ' is-clear') + '" data-topic="' + esc(row.topic) + '" href="' + practiceSessionHref(code, row.topic, selected) + '">' +
           '<span class="practice-topic-code">' + esc(row.topic) + '</span><span class="topic-main"><span class="topic-name">' + esc(topicName(code, row.topic)) + '</span>' +
-          '<span class="topic-meta">' + (row.due ? '待複習 ' + row.due + ' 題' : '本輪已清 ✔') + '</span></span>' +
+          '<span class="topic-meta">' + (row.due ? '本輪待複習 ' + row.due + ' 題' : '本輪已全對 · 仍可鞏固') + '</span></span>' +
           '<span class="practice-topic-count" aria-label="' + row.n + ' 道錯題"><small>×</small> ' + String(row.n).padStart(2, '0') + '</span></a>';
       }).join('') + (rows.length ? '' : '<div class="empty-note">此科目尚未收錄錯題，加入題庫後會自動顯示年份與課題。</div>') + '</div>' +
-      '<section class="topic-info" aria-label="課題資訊"><span aria-hidden="true">INFO</span><div id="practiceTopicInfo" aria-live="polite"></div></section>' +
+      '<section class="topic-info" aria-label="課題資訊"><span aria-hidden="true">課題便箋</span><div id="practiceTopicInfo" aria-live="polite"></div></section>' +
       (filtered.length ? '<a class="btn btn-random" href="' + practiceSessionHref(code, '__random__', selected) + '"><span class="persona-icon persona-icon-random" aria-hidden="true"></span> ' + yearLabel + '隨機抽 10 題</a>' : '') +
       '</section></div></section>';
     function drawYears() {
@@ -1551,9 +1491,9 @@
         return '<button class="inventory-year" type="button" data-practice-year="' + esc(year) + '" aria-pressed="' + (year === selected) + '">' +
           '<span class="year-number" aria-hidden="true">' + (year === 'all' ? 'ALL' : esc(info.badge)) + '</span><span class="year-body"><span class="year-name">' +
           (year === 'all' ? '全部年份' : esc(info.label + ' ' + SUBJECT_META[code].name)) + '</span><span class="year-meters">' +
-          (year === 'all' ? '' : '<span><abbr title="DSE 試卷等級">LV</abbr> <b>' + esc(level) + '</b></span><span><abbr title="原卷分數">HP</abbr> <b>' +
+          (year === 'all' ? '' : '<span><abbr title="DSE 試卷參考等級，非官方">參考等級</abbr> <b>' + esc(level) + '</b></span><span><abbr title="已核實原卷分數">原卷</abbr> <b>' +
             (metrics ? assessment.earned + '<small>/' + assessment.total + '</small>' : '—') + '</b></span>') +
-          '<span><abbr title="錯題數">SP</abbr> <b>' + count + '</b></span></span>' +
+          '<span><abbr title="收錄錯題數">錯題</abbr> <b>' + count + '</b></span></span>' +
           (year !== 'all' && metrics ? '<span class="year-grade-note">' + esc(info.mock ? info.label + ' · ' + SUBJECT_META[code].name : assessment.scope) + (metrics.current ? ' · 等級估算' : ' · 等級未評') + '</span>' : '') + '</span></button>';
       }).join('');
       var list = $('#practiceYears'), active = $('#practiceYears [aria-pressed="true"]');
@@ -1742,6 +1682,7 @@
             '</div>' : '') +
         (mcOnly && nSub ? '<div class="mc-only-note"><span class="persona-icon persona-icon-fast" aria-hidden="true"></span> 已切為只做選擇題：' + nSub +
           ' 道大題已收起，今次唔使答、唔計分、唔入記錄。</div>' : '') +
+        '<div class="study-flow" aria-label="學習流程"><span class="flow-answer current">01 獨立作答</span><span aria-hidden="true">→</span><span class="flow-review">02 核對與理解</span><span aria-hidden="true">→</span><span class="flow-save">03 保存與再練</span></div>' +
         '<p class="review-note" id="draftSaveStatus" role="status">作答自動保存在本機，登入後同步；未完成題不計零分。</p>' +
         '<nav class="question-jump" aria-label="本次題目">' + items.map(function (it, i) { return '<a href="#question-' + esc(it.id) + '" data-jump-question="' + esc(it.id) + '">' + (i+1) + '</a>'; }).join('') + '</nav>' +
         (compactStudy() && nSub ? '<p class="review-note">這組含大題；可隨時暫停，回到電腦繼續，或只提交已完成的題目。</p>' : '') +
@@ -1753,7 +1694,7 @@
             (mcOnly ? '<span class="persona-icon persona-icon-success" aria-hidden="true"></span> 提交 ' + nMc + ' 道選擇題' : '<span class="persona-icon persona-icon-success" aria-hidden="true"></span> 全部做完，一次過提交') + '</button>' +
           '<button class="btn btn-ghost" id="submitAnsweredBtn" type="button">提交已完成的題目</button>' +
         '</div>' +
-        '<div class="result-panel" id="resultPanel" hidden></div>' +
+        '<div class="result-panel" id="resultPanel" role="region" aria-label="本次練習的核對與保存" tabindex="-1" hidden></div>' +
       '</section>';
 
     bindSession(code, topic, dkey, renderItems, items, mcOnly);
@@ -2142,7 +2083,7 @@
         var wList = checks.map(function (c) { return /^✗/.test(c) ? 0 : 1; });
         var wTot = wList.reduce(function (a, b) { return a + b; }, 0);
         var rubric = window.DSELibrary.practiceRubric(it);
-        html += '<details class="review-self-check"><summary>自行核對／調整練習得分</summary><p class="review-note">核對項可能含替代答案或同一分的細節，圈點數量不直接等於分數；練習自評與 AI 分析分開保存。</p><div class="chk-form" data-id="' + esc(it.id) + '" data-marks="' + marksOf(it) +
+        html += '<details class="review-self-check" open><summary>核對給分點，確認這次的得分</summary><p class="review-note">核對項可能含替代答案或同一分的細節，圈點數量不直接等於分數；練習自評與 AI 分析分開保存。</p><div class="chk-form" data-id="' + esc(it.id) + '" data-marks="' + marksOf(it) +
           '" data-wtot="' + wTot + '">' +
           '<div class="chk-form-h"><span class="persona-icon persona-icon-notes" aria-hidden="true"></span> 你寫到邊個踩分點？（剔中 ' +
             '<span class="chk-got">0</span>/<span class="chk-tot">' + wTot + '</span>' +
@@ -2164,7 +2105,20 @@
 
     var panel = $('#resultPanel');
     panel.hidden = false;
-    panel.innerHTML = html;
+    panel.innerHTML = '<button class="btn btn-ghost review-answers-toggle" id="reviewAnswersBtn" type="button" aria-expanded="false">回看本次已提交的作答 ↑</button>' + html;
+    var sessionRoot = $('.session');
+    if (sessionRoot) {
+      sessionRoot.classList.add('is-reviewing');
+      $('.flow-answer', sessionRoot).classList.remove('current');
+      $('.flow-review', sessionRoot).classList.add('current');
+      $('#reviewAnswersBtn').addEventListener('click', function () {
+        var show = this.getAttribute('aria-expanded') !== 'true';
+        this.setAttribute('aria-expanded', String(show));
+        this.textContent = show ? '收起已提交作答' : '回看本次已提交的作答 ↑';
+        sessionRoot.classList.toggle('show-submitted', show);
+        if (show) $('#qPaper').scrollIntoView({behavior:motionBehavior(),block:'start'});
+      });
+    }
     $all('.chk-form', panel).forEach(function (f) {
       var score = (restoredScores || {})[f.dataset.id];
       if (!score) return;
@@ -2172,6 +2126,7 @@
       var manual = $('.manual-score', f); if (manual && score.marks != null) manual.value = score.marks;
     });
     bindAIPanels(panel, items);
+    if (typeof panel.focus === 'function') panel.focus({preventScroll:true});
     panel.scrollIntoView({ behavior: motionBehavior(), block: 'start' });
 
     function subResult(it, f) {
@@ -2291,16 +2246,21 @@
           (topic === '__today__' ? '<div class="today-followup"><h3>仍需鞏固</h3>' +
             (items.filter(function (it) { return !window.DSELibrary.full(reviewState.results[it.id]); }).map(function (it) {
               var subject = SUBJECT_ORDER.filter(function (c) { return itemsOf(c).some(function (q) { return q.id === it.id; }); })[0];
-              return '<p><a href="#/library/books/' + subject + '/' + encodeURIComponent(it.topic) + '">' + esc(SUBJECT_META[subject].name + ' · ' + it.qref) + ' → 查看錯因與解析</a></p>';
+              return '<p><a href="#/library/books/question/' + subject + '/' + encodeURIComponent(it.id) + '?back=' + encodeURIComponent(sessState.back || '#/') + '">' + esc(SUBJECT_META[subject].name + ' · ' + it.qref) + ' → 查看錯因與解析</a></p>';
             }).join('') || '<p>本次全部答對，可按下一次間隔繼續鞏固。</p>') + '<a class="btn btn-primary" href="#/">返回今日複習</a></div>' : '') +
           '<div class="saved-review-links">' + items.map(function (it) {
             var subject = SUBJECT_ORDER.filter(function (c) {return itemsOf(c).some(function (q) {return q.id === it.id;});})[0];
-            return '<a href="#/library/books/question/' + subject + '/' + encodeURIComponent(it.id) + '">' + esc(it.qref) + ' · 查看原答與本次變化</a>';
+            return '<a href="#/library/books/question/' + subject + '/' + encodeURIComponent(it.id) + '?back=' + encodeURIComponent(sessState.back || '#/records') + '">' + esc(it.qref) + ' · 查看原答與本次變化</a>';
           }).join('') + '</div>' +
           '<div class="rp-actions"><a class="btn btn-primary" id="finishStudy" href="' + esc(sessState.back || '#/') + '">結束本次／返回原處</a>' +
           (resumeRemaining ? '<a class="btn btn-ghost" id="resumeRemaining" href="' + esc(resumeRemaining) + '">繼續其餘 ' + remaining.length + ' 題</a>' : '') +
           '<a class="btn btn-ghost" href="#/records">查看學習記錄</a></div>' +
         '</div>';
+      if (sessionRoot) {
+        $('.flow-review', sessionRoot).classList.remove('current');
+        $('.flow-save', sessionRoot).classList.add('current');
+      }
+      if (typeof panel.focus === 'function') panel.focus({preventScroll:true});
       panel.scrollIntoView({ behavior: motionBehavior(), block: 'center' });
       toast('記錄已儲存 ✔');
     });
@@ -2574,13 +2534,7 @@
   function sessionTimelineHtml() {
     var rows = allSessions().filter(function (s) { return s && Number.isFinite(s.t) && s.t <= Date.now() && s.results; })
       .slice().sort(function (a, b) { return b.t - a.t; });
-    // Replayed cloud copies of one submission appear only once.
-    var seen = new Set();
-    rows = rows.filter(function (s) {
-      var key = JSON.stringify([s.t, s.subj, s.topic]);
-      if (seen.has(key)) return false;
-      seen.add(key); return true;
-    });
+    // allSessions() already removes exact replays; distinct results at the same timestamp must remain visible.
     return '<div class="panel"><div class="panel-h-row"><h2 class="panel-h">練習時間線</h2>' +
       '<label>顯示 <select id="historyScope"><option value="all">全部記錄</option><option value="cycle">本雙周</option></select></label></div>' +
       '<p class="history-summary">按提交時間排列 · 北京時間 · 本次正確題數與原卷成績分開記錄。最多顯示最近 30 次。</p>' +
@@ -2595,13 +2549,17 @@
           '<div class="session-entry-body">本次全對 ' + correct + ' 題；尚未全對 ' + (ids.length - correct) + ' 題。' +
           ids.map(function (id) {
             var result = s.results[id], attempt = result.attempt;
-            if (!attempt || attempt.version !== 1) return '';
-            return '<details class="attempt-snapshot"><summary>' + esc(id) + ' · ' + esc(result.marks + '/' + result.tot) +
-              (attempt.assisted ? ' · 曾使用輔助' : '') + '</summary><p>本次提交原文</p><div class="ans-body">' +
-              esc(attempt.answer).replace(/\n/g, '<br>') + (attempt.onPaper ? '<p>另有紙上作答；未保存影像，不新增獨立掌握證據。</p>' : '') +
-              '</div><p>已勾核對項：' + esc((Array.isArray(attempt.checkedIndices) ? attempt.checkedIndices : []).map(function (i) { return i + 1; }).join('、') || '無') +
-              ' · ' + (attempt.scoreMethod === 'manual' ? '人工確認自評' : attempt.scoreMethod === 'reviewed-rubric' ? '已核實給分規則' : '選項核對') +
-              '</p></details>';
+            var item = DATA.subjects[s.subj] && DATA.subjects[s.subj].items.filter(function (it) {return it.id === id;})[0];
+            var questionHref = '#/library/books/question/' + encodeURIComponent(s.subj) + '/' + encodeURIComponent(id) + '?back=' + encodeURIComponent('#/records');
+            var original = !attempt || attempt.version !== 1
+              ? '<p class="review-note">這份舊記錄未保存作答原文；保留當時得分，不補造答案或獨立掌握證據。</p>'
+              : '<p>本次提交原文</p><div class="ans-body">' + esc(attempt.answer).replace(/\n/g, '<br>') +
+                (attempt.onPaper ? '<p>另有紙上作答；未保存影像，不新增獨立掌握證據。</p>' : '') + '</div>' +
+                '<p>已勾核對項：' + esc((Array.isArray(attempt.checkedIndices) ? attempt.checkedIndices : []).map(function (i) { return i + 1; }).join('、') || '無') +
+                ' · ' + (attempt.scoreMethod === 'manual' ? '人工確認自評' : attempt.scoreMethod === 'reviewed-rubric' ? '已核實給分規則' : '選項核對') + '</p>';
+            return '<details class="attempt-snapshot"><summary>' + esc(item ? item.qref + ' · ' + item.stem : id) + ' · ' + esc(result.marks + '/' + result.tot) +
+              (attempt && attempt.assisted ? ' · 曾使用輔助' : '') + '</summary>' + original +
+              (item ? '<a class="link" href="' + esc(questionHref) + '">看這題的錯因、正解與原卷 →</a>' : '<p class="review-note">題庫載入後可定位原題。</p>') + '</details>';
           }).join('') +
           '<div><a href="#/library/books/' + esc(s.subj) + '">查看錯題歸納</a>' +
           '<a href="' + esc(study.drillHref(s.subj, ids, '#/records')) + '">只重做這次的題目</a></div></div></details>';
@@ -2637,9 +2595,9 @@
     $('#app').innerHTML =
       '<section class="page records-page">' +
         '<header class="page-head"><div><h1 class="page-title"><span class="persona-icon persona-icon-records" aria-hidden="true"></span> 做題記錄</h1>' +
-        '<p class="page-sub">每完成一次課題練習就留一個印；滑鼠移上去睇詳情。</p></div>' +
-          '<div class="record-tools"><button class="btn btn-ghost" id="exportDataBtn" type="button">⬇️ 匯出記錄</button>' +
-          '<button class="btn btn-ghost" id="importDataBtn" type="button">⬆️ 匯入備份</button>' +
+        '<p class="page-sub">回看提交的答案與進步；原卷、重做與長期掌握分開記錄。</p></div>' +
+          '<div class="record-tools"><button class="btn btn-ghost" id="exportDataBtn" type="button">匯出備份</button>' +
+          '<button class="btn btn-ghost" id="importDataBtn" type="button">匯入備份</button>' +
           '<input id="importDataFile" type="file" accept="application/json,.json" hidden></div>' +
           '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
 
@@ -2656,22 +2614,22 @@
 
         '<div class="stat-cards">' +
           statCard('<span class="persona-icon persona-icon-practice" aria-hidden="true"></span>', '累計作答', totalDone + ' 題') +
-          statCard('<span class="persona-icon persona-icon-home" aria-hidden="true"></span>', '練習次數', sessions.length + ' 次') +
+          statCard('<span class="persona-icon persona-icon-home" aria-hidden="true"></span>', '累計練習', allSessions().length + ' 次') +
           statCard('<span class="persona-icon persona-icon-random" aria-hidden="true"></span>', '上次仍錯', wrongRows.length + ' 題', wrongRows.length ? 'c-red' : 'c-green') +
         '</div>' +
 
         sessionTimelineHtml() +
         cycleReportHtml() +
 
-        '<div class="panel"><h2 class="panel-h">刷題活躍圖（近 6 個月，按答題數）</h2><div id="heat"></div>' +
+        '<div class="panel"><h2 class="panel-h">學習足跡 · 近六個月</h2><div id="heat"></div>' +
         '<div class="heat-legend">少 <span class="lv lv0"></span><span class="lv lv1"></span>' +
         '<span class="lv lv2"></span><span class="lv lv3"></span><span class="lv lv4"></span> 多（佔題庫比例）</div></div>' +
 
-        '<div class="panel"><div class="panel-h-row"><h2 class="panel-h">⏰ 間隔複習（到期優先）</h2></div>' +
+        '<div class="panel"><div class="panel-h-row"><h2 class="panel-h">間隔複習（到期優先）</h2></div>' +
           '<p class="review-note">獨立答對後依次隔 15、21、30、45、60 日鞏固；新提交的未滿分題約 2 日後再檢驗。可以提前自主練習，短期重複全對不會冒充長期掌握。複習進度跨雙周保留。</p>' +
           '<div class="wrong-list" id="reviewDueList"></div></div>' +
 
-        '<div class="panel"><div class="panel-h-row"><h2 class="panel-h"><span class="persona-icon persona-icon-sync" aria-hidden="true"></span> 錯題複習狀態（仍錯在上、已通過嘅沉底）</h2>' +
+        '<div class="panel"><div class="panel-h-row"><h2 class="panel-h"><span class="persona-icon persona-icon-sync" aria-hidden="true"></span> 本輪錯題狀態</h2>' +
           '<div class="filter-seg" id="wrongFilter">' +
             ['ALL'].concat(SUBJECT_ORDER).map(function (c) {
               var lbl = c === 'ALL' ? '全部' : SUBJECT_META[c].name;
@@ -2731,9 +2689,37 @@
     var backup = backupData();
     var blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
     var url = URL.createObjectURL(blob), a = document.createElement('a');
-    a.href = url; a.download = 'kyle-dse-quiz-backup-' + fmtDate(Date.now()).replace(/\//g, '-') + '.json';
+    a.href = url; a.download = activeUser + '-dse-quiz-backup-' + fmtDate(Date.now()).replace(/\//g, '-') + '.json';
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     toast('備份檔已下載 ✔');
+  }
+  function validBackup(data) {
+    function object(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+    function safe(v, depth) {
+      if (depth > 40) return false;
+      if (typeof v === 'number') return Number.isFinite(v);
+      if (!v || typeof v !== 'object') return true;
+      return Object.keys(v).every(function (key) { return !['__proto__','prototype','constructor'].includes(key) && safe(v[key], depth + 1); });
+    }
+    function history(v) { return Array.isArray(v) && v.every(function (s) {
+      return object(s) && Number.isFinite(s.t) && s.t >= 0 && object(s.results) && Object.keys(s.results).every(function (id) {
+        var r = s.results[id];
+        if (!object(r)) return false;
+        if (r.marks !== undefined && (!Number.isFinite(r.marks) || r.marks < 0)) return false;
+        if (r.tot !== undefined && (!Number.isFinite(r.tot) || r.tot <= 0 || r.marks > r.tot)) return false;
+        return !r.attempt || object(r.attempt);
+      });
+    }); }
+    if (!object(data) || data.app !== 'kyle-dse-quiz' || !safe(data, 0) ||
+        (data.userId !== undefined && !['kyle','yeelam'].includes(data.userId)) ||
+        !history(data.sessions) || !history(data.archive || []) || !object(data.drafts) || !object(data.reviewPlan) ||
+        (data.aiReviews !== undefined && !object(data.aiReviews)) ||
+        (data.cycle != null && (!Number.isFinite(Number(data.cycle)) || Number(data.cycle) < 0))) return false;
+    return Object.values(data.drafts).every(function (draft) {
+      return object(draft) && ['pick','text','paper','steps','changedAt'].every(function (kind) { return draft[kind] === undefined || object(draft[kind]); }) &&
+        (draft.deletedAt === undefined || (Number.isFinite(draft.deletedAt) && draft.deletedAt >= 0)) &&
+        Object.values(draft.changedAt || {}).every(function (at) { return Number.isFinite(at) && at >= 0; });
+    }) && Object.values(data.reviewPlan).every(object);
   }
   function importData(e) {
     var file = e.target.files && e.target.files[0];
@@ -2742,27 +2728,26 @@
     reader.onload = function () {
       var data;
       try { data = JSON.parse(reader.result); } catch (err) { toast('檔案不是有效 JSON'); return; }
-      var validSessions = function (v) { return Array.isArray(v) && v.every(function (s) {
-        return s && typeof s.t === 'number' && s.results && typeof s.results === 'object';
-      }); };
-      if (!data || data.app !== 'kyle-dse-quiz' || !validSessions(data.sessions) ||
-          !validSessions(data.archive || []) || !data.drafts || typeof data.drafts !== 'object' ||
-          !data.reviewPlan || typeof data.reviewPlan !== 'object') {
-        toast('備份格式不符，沒有匯入'); return;
+      if (!validBackup(data)) { toast('備份格式不符，沒有匯入；本機資料未改動。'); return; }
+      var owner = data.userId;
+      if (!owner) {
+        // Old v1 exports had no owner. Never silently attach one to the current account.
+        owner = typeof window.prompt === 'function' ? window.prompt('這是未標記帳戶的舊備份。請先核實來源，再輸入備份所屬帳戶 Kyle 或 Yeelam；取消則不匯入。') : '';
+        owner = String(owner || '').trim().toLowerCase();
       }
-      if (!confirm('匯入會以備份內容取代這個瀏覽器目前的練習記錄、草稿與複習進度。確定繼續？')) return;
-      sessions = data.sessions; archive = data.archive || []; drafts = data.drafts; reviewPlan = data.reviewPlan;
-      aiReviews = data.aiReviews || {};
-      localStorage.setItem(LS_SESS, JSON.stringify(sessions));
-      localStorage.setItem(LS_ARCHIVE, JSON.stringify(archive));
-      localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
-      localStorage.setItem(LS_REVIEW, JSON.stringify(reviewPlan));
-      localStorage.setItem(LS_AI, JSON.stringify(aiReviews));
-      if (data.cycle) localStorage.setItem(LS_CYCLE, String(data.cycle));
+      if (owner !== activeUser) { toast('備份不屬於目前帳戶，沒有匯入。請登入正確帳戶後再試。'); return; }
+      if (!confirm('把 ' + (activeUser === 'kyle' ? 'Kyle' : 'Yeelam') + ' 的備份合併到本機？較新的答案、刪除標記和未完成草稿優先保留，不會以舊備份整批取代。')) return;
+      try {
+        // Keep one account-scoped rollback copy before the first mutation.
+        localStorage.setItem(userKey('dse_quiz_import_rollback_v1'), JSON.stringify(backupData()));
+      } catch (_) { toast('無法保存匯入前備份；為保障本機資料，沒有匯入。'); return; }
+      data.userId = owner;
+      mergeData(data);
+      ensureCycle();
       syncRevision++;
       scheduleSync();
       e.target.value = '';
-      toast('備份已還原 ✔');
+      toast('同帳戶備份已安全合併；較新的作答已保留。');
       renderRecords();
     };
     reader.onerror = function () { toast('讀取備份失敗'); };
@@ -2933,7 +2918,7 @@
     }
     el.innerHTML = dueRows.map(function (r) {
       var overdue = Math.max(0, Math.floor((now - r.plan.dueAt) / 864e5));
-      return '<a class="wrong-row due" href="#/session/' + r.code + '/' + encodeURIComponent(r.it.topic) + '">' +
+      return '<a class="wrong-row due" href="' + esc(study.drillHref(r.code,[r.it.id],'#/records')) + '">' +
         '<span class="wrong-subj">' + SUBJECT_META[r.code].icon + '</span>' +
         '<span class="wrong-main"><b>' + esc(r.it.qref) + '</b> ' + esc(r.it.stem) +
           '<small>' + esc(r.it.topic + ' ' + topicName(r.code, r.it.topic)) + ' · 已逾期 ' + overdue + ' 日' +
@@ -2973,7 +2958,7 @@
     passStrong.sort(byRecent);
     var el = $('#wrongList');
     if (!due.length && !passOnce.length && !passStrong.length) {
-      el.innerHTML = '<div class="empty-ok"><span class="persona-icon persona-icon-celebrate" aria-hidden="true"></span> 呢科嘅錯題全部征服咗！</div>';
+      el.innerHTML = '<div class="empty-note">目前沒有可顯示的題目。可先確認題庫已載入，或換一個科目；這不代表已掌握所有課題。</div>';
       return;
     }
 
@@ -2988,14 +2973,14 @@
             esc(String(a.marks == null ? '—' : a.marks) + '/' + String(a.tot == null ? '—' : a.tot)) +
             ' 分 · ' + ratio + '%</b></li>';
         }).join('') + '</ol></details>' : '<div class="item-history-empty">尚無作答紀錄</div>';
-      return '<div class="wrong-entry"><a class="wrong-row ' + cls + '" href="#/session/' + r.code + '/' +
-        encodeURIComponent(r.it.topic) + '">' +
+      return '<div class="wrong-entry"><a class="wrong-row ' + cls + '" href="#/library/books/question/' + r.code + '/' +
+        encodeURIComponent(r.it.id) + '?back=' + encodeURIComponent('#/records') + '">' +
         '<span class="wrong-subj">' + SUBJECT_META[r.code].icon + '</span>' +
         '<span class="wrong-main"><b>' + esc(r.it.qref) + '</b> ' + esc(r.it.stem) +
           '<small>' + esc(r.it.topic + ' ' + topicName(r.code, r.it.topic)) +
           ' · ' + when + (r.l ? ' · 上次得分率 ' + ratioTxt : '') + '</small></span>' +
         badge +
-        '<span class="wrong-go">再練 →</span></a>' + details + '</div>';
+        '<span class="wrong-go">看錯因 →</span></a>' + details + '</div>';
     }
     function group(title, rows, cls, badge, empty) {
       if (!rows.length) return '';
@@ -3056,9 +3041,10 @@
   seedReviewPlan();
   normalizeReviewPlan();
   if (ensureCycle()) {
-    setTimeout(function () { toast('新嘅雙週開始，進度已重置！'); }, 300);
+    setTimeout(function () { toast('新雙周已開始；報表已更新，草稿與長期記錄保留。'); }, 300);
   }
   route();
+  startCycleTimer();
   initSync(startupHash);
 })();
 

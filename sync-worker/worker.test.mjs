@@ -190,7 +190,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'study-continuity-20261102');
+  assert.equal(status.version, 'study-notebook-20261111');
   assert.equal(status.passwordConfigured, false);
   assert.equal(status.aiFiguresEnabled, false);
   const enabled = await worker.fetch(new Request(`${BASE}/health`), {...env, DEEPSEEK_API_KEY: 'synthetic-only', AI_VISION: 'true'});
@@ -224,7 +224,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'study-continuity-20261102', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'study-notebook-20261111', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -282,6 +282,89 @@ test('cross-cycle sync preserves unfinished work and explicit deletions in eithe
     assert.deepEqual(reconnected.drafts['chem:T1'].paper, {});
     assert.deepEqual(reconnected.drafts['chem:T1'].steps, {});
     assert.equal(reconnected.drafts['math:T2'].pick.m, 'A', 'other unfinished work remains available');
+  }
+});
+
+test('cycle sync canonicalizes archived history instead of reviving stale current sessions', () => {
+  const id = 'chem-2025-Q01-exact';
+  const session = { t: 150, subj: 'chem', topic: 'T1', results: { [id]: { marks: 1, tot: 2, answer: '原本提交' } } };
+  const base = { app: 'kyle-dse-quiz', reviewPlan: {}, aiReviews: {} };
+  const stale = { ...base, cycle: '100', sessions: [session], archive: [], drafts: { 'chem:T1': {
+    text: { [id]: '舊草稿', 'chem-2025-Q02-exact': '已刪除草稿' },
+    changedAt: { [`text:${id}`]: 110, 'text:chem-2025-Q02-exact': 120 },
+  } } };
+  const newCycle = { ...base, cycle: '200', sessions: [], archive: [structuredClone(session)], drafts: { 'chem:T1': {
+    text: { [id]: '新草稿' }, steps: { [id]: { mode: 'text', rows: [] } },
+    changedAt: { [`text:${id}`]: 230, [`steps:${id}`]: 231 }, deletedAt: 220,
+  } } };
+  const originals = structuredClone([stale, newCycle]);
+  const snapshot = ({ sessions, archive, cycle, drafts }) => ({ sessions, archive, cycle, drafts });
+  for (const [left, right] of [[stale, newCycle], [newCycle, stale]]) {
+    const merged = mergeBackup(left, right);
+    assert.equal(merged.cycle, '200');
+    assert.deepEqual(merged.sessions, []);
+    assert.deepEqual(merged.archive, [session]);
+    assert.deepEqual(Object.keys(merged.archive[0].results), [id]);
+    assert.deepEqual(merged.drafts['chem:T1'].text, { [id]: '新草稿' });
+    assert.deepEqual(merged.drafts['chem:T1'].steps, newCycle.drafts['chem:T1'].steps);
+    assert.equal(merged.drafts['chem:T1'].deletedAt, 220);
+    for (const repeated of [mergeBackup(merged, stale), mergeBackup(stale, merged),
+      mergeBackup(merged, newCycle), mergeBackup(newCycle, merged), mergeBackup(merged, merged)]) {
+      assert.deepEqual(snapshot(repeated), snapshot(merged), 'repeat sync never duplicates or revives history or deleted drafts');
+    }
+  }
+  assert.deepEqual([stale, newCycle], originals, 'merging does not mutate either backup');
+});
+
+test('cycle history partitions all four arrays at the exact boundary and retains odd finite timestamps', () => {
+  const record = (t, id) => Object.freeze({ t, subj: 'math', topic: 'U1',
+    results: Object.freeze({ [id]: Object.freeze({ marks: 1, tot: 1, answer: id }) }) });
+  const negative = record(-25.5, 'math-2025-Q00');
+  const before = record(199.5, 'math-2025-Q01');
+  const boundary = record(200, 'math-2025-Q02');
+  const after = record(200.5, 'math-2025-Q03');
+  const future = record(2e12, 'math-2025-Q04');
+  const base = { app: 'kyle-dse-quiz', drafts: {}, reviewPlan: {} };
+  const stale = { ...base, cycle: '100', sessions: Object.freeze([before, future]), archive: Object.freeze([negative, after]) };
+  const newCycle = { ...base, cycle: '200', sessions: Object.freeze([before, after]), archive: Object.freeze([boundary]) };
+  for (const [left, right] of [[stale, newCycle], [newCycle, stale]]) {
+    const merged = mergeBackup(left, right);
+    assert.deepEqual(merged.sessions, [boundary, after, future]);
+    assert.deepEqual(merged.archive, [negative, before], 'a clock-skewed new-cycle record is archived, not discarded');
+    for (const item of [...merged.sessions, ...merged.archive]) {
+      assert.equal(item, [negative, before, boundary, after, future].find(original => original.t === item.t), 'immutable records remain intact');
+    }
+    const repeated = mergeBackup(merged, mergeBackup(right, left));
+    assert.deepEqual(repeated.sessions, merged.sessions);
+    assert.deepEqual(repeated.archive, merged.archive);
+  }
+});
+
+test('history identity keeps timestamp, subject, topic and exact JSON result IDs distinct', () => {
+  const first = { t: 210, subj: 'chem', topic: 'T1', results: { 'chem-Q01': { marks: 1, tot: 1 } } };
+  const records = [first, { ...first, t: 211 }, { ...first, subj: 'bio' }, { ...first, topic: 'T2' },
+    { ...first, results: { 'chem-Q1': { marks: 1, tot: 1 } } }];
+  const base = { app: 'kyle-dse-quiz', cycle: '200', drafts: {}, reviewPlan: {} };
+  const merged = mergeBackup({ ...base, sessions: records, archive: [first] },
+    { ...base, sessions: [structuredClone(first)], archive: records.map(item => structuredClone(item)) });
+  assert.equal(merged.sessions.length, records.length);
+  assert.deepEqual(merged.archive, []);
+  for (const item of records) assert.ok(merged.sessions.includes(item), 'every existing identity preserves its original record');
+});
+
+test('history without a cycle preserves compatible current and archive arrays', () => {
+  const current = { t: 300, subj: 'bio', topic: 'T1', results: { 'bio-Q01': { marks: 1, tot: 1 } } };
+  const archived = { t: 100, subj: 'bio', topic: 'T2', results: {} };
+  const base = { app: 'kyle-dse-quiz', drafts: {}, reviewPlan: {} };
+  const first = { ...base, cycle: null, sessions: [current], archive: [archived] };
+  const second = { ...base, sessions: [structuredClone(current)], archive: [structuredClone(archived)] };
+  for (const [left, right] of [[first, second], [second, first]]) {
+    const merged = mergeBackup(left, right);
+    assert.equal(merged.cycle, null);
+    assert.deepEqual(merged.sessions, [current]);
+    assert.deepEqual(merged.archive, [archived]);
+    assert.deepEqual(mergeBackup(merged, merged).sessions, merged.sessions);
+    assert.deepEqual(mergeBackup(merged, merged).archive, merged.archive);
   }
 });
 

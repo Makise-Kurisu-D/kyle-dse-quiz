@@ -3,119 +3,45 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<script src="appearance.js?v=study-20261102"></script>
-<title>Kyle 錯題本 · DSE 複習</title>
-<meta name="description" content="Kyle 的 DSE 化學／生物／數學錯題本：按課題練習、自動批改、踩分點自檢、刷題記錄">
-<link rel="icon" type="image/jpeg" href="images/avatar.jpg?v=practice-content-20261021">
-<link rel="preconnect" href="https://snowy-cake-a0a7.3355718646.workers.dev" crossorigin>
-<link rel="stylesheet" href="style.css?v=practice-content-20261021">
-<link rel="stylesheet" href="library.css?v=study-20261102">
-<link rel="stylesheet" href="appearance.css?v=frame-spacing-left-20261028">
-<link rel="stylesheet" href="immersive.css?v=20261103-clean">
-<link rel="stylesheet" href="immersive-pages.css?v=20261031">
-<link rel="stylesheet" href="study-experience.css?v=study-20261103-layout2">
-<link rel="stylesheet" href="night-harmony.css?v=20261103-overlay">
-<link rel="stylesheet" href="home-pages.css?v=home-scenes-20261107">
+<meta name="theme-color" content="#f6f5ef">
+<title>拾題 · DSE 學習手冊</title>
+<meta name="description" content="從一道錯題，讀懂一個知識點。為 DSE 而設的私人練習、錯題復盤與批改卷學習手冊。">
+<link rel="icon" type="image/svg+xml" href="notebook-mark.svg">
+<link rel="stylesheet" href="notebook.css?v=notebook-20261111">
 </head>
 <body>
 <a class="skip-link" id="skipLink" href="#app">跳至主要內容</a>
-<div class="visual-world" id="visualWorld" aria-hidden="true">
-  <div class="visual-character"></div>
-  <div class="home-scene" aria-hidden="true"></div>
-  <div class="archive-backdrop" id="archiveBackdrop" aria-hidden="true" inert hidden></div>
-  <div class="archive-tint"></div>
-  <div class="archive-art"></div>
-</div>
-<header class="shell-header">
-  <button id="railToggle" class="rail-toggle" type="button" aria-label="收起側欄" title="收起側欄" aria-expanded="true" aria-controls="rail">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/><path class="rail-toggle-arrow" d="m16 9-3 3 3 3"/></svg>
-  </button>
-  <div class="shell-heading" id="shellHeading">
-    <div class="shell-title"><b>HOME</b><span>學習主頁</span></div>
-    <span id="appearanceClock" class="appearance-clock"></span>
-  </div>
-  <div class="appearance-tools">
-    <div class="version-switch" role="group" aria-label="介面版本">
-      <button type="button" data-appearance-choice="full" aria-pressed="true" aria-label="完整版" title="完整版"><span class="appearance-label-long">完整版</span><span class="appearance-label-short" aria-hidden="true">完整</span></button>
-      <button type="button" data-appearance-choice="simple" aria-pressed="false" aria-label="精簡無障礙版" title="精簡無障礙版"><span class="appearance-label-long">精簡無障礙版</span><span class="appearance-label-short" aria-hidden="true">精簡</span></button>
-    </div>
-    <button id="dayNightToggle" class="day-night-toggle" type="button" aria-label="切換日夜模式" aria-describedby="themeSchedule">
-      <svg class="moon-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M20.8 13.2A9 9 0 0 1 10.8 3a9 9 0 1 0 10 10.2Z"/></svg>
-      <svg class="sun-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-    </button>
-    <span id="themeSchedule" class="sr-only">日間為北京時間 07:00 至 19:00。手動切換持續至下一次日夜分界。</span>
-  </div>
+<header class="site-header">
+  <a class="brand" href="#/" aria-label="拾題，返回今日學習"><span class="brand-mark" aria-hidden="true">拾</span><span><strong>拾題</strong><small>DSE STUDY NOTES</small></span></a>
+  <nav class="desktop-nav" aria-label="主要導覽">
+    <a class="desk-link" href="#/" data-route="home">今日</a>
+    <a class="desk-link" href="#/practice" data-route="practice">練習</a>
+    <a class="desk-link" href="#/library/books" data-route="library">錯題本</a>
+    <a class="desk-link" href="#/library/papers" data-route="papers">批改卷</a>
+    <a class="desk-link" href="#/records" data-route="records">學習記錄</a>
+  </nav>
+  <a class="account-link" href="#/records" aria-label="帳戶與同步設定"><span class="account-initial" id="accountInitial">K</span><span id="accountName">Kyle</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></a>
 </header>
-<div class="sr-only" id="appearanceStatus" role="status" aria-live="polite"></div>
-
-<!-- 桌面側邊欄 -->
-<nav class="rail" id="rail" aria-label="主要導覽">
-  <a class="rail-logo" href="#/" aria-label="Kyle 錯題本，返回主頁">
-    <span class="rail-portrait" aria-hidden="true"></span>
-  </a>
-  <div class="rail-links">
-   <div class="rail-menu">
-    <a class="rail-item" href="#/" data-route="home"><span class="rail-word" aria-hidden="true">HOME</span><span class="rail-cn">主頁</span></a>
-    <a class="rail-item" href="#/practice" data-route="practice"><span class="rail-word" aria-hidden="true">TOPICS</span><span class="rail-cn">練習</span></a>
-    <a class="rail-item" href="#/library/books" data-route="library"><span class="rail-word" aria-hidden="true">ARCHIVE</span><span class="rail-cn">錯題歸納</span></a>
-    <a class="rail-item" href="#/library/papers" data-route="papers"><span class="rail-word" aria-hidden="true">PAPERS</span><span class="rail-cn">批改卷</span></a>
-    <a class="rail-item" href="#/records" data-route="records"><span class="rail-word" aria-hidden="true">RECORDS</span><span class="rail-cn">記錄</span></a>
-    <a class="rail-item" href="./ios-widget.html"><span class="rail-word" aria-hidden="true">WIDGET</span><span class="rail-cn">iOS 小組件</span></a>
-   </div>
-  </div>
-  <p class="rail-caption">STUDY / REPEAT / REMEMBER<br>每次重溫，都再靠近一步。</p>
-  <button class="rail-item rail-reset" id="railReset" type="button">
-    <span>重設本輪進度</span>
-  </button>
-</nav>
-
-<details class="compact-nav" id="compactNav"><summary aria-label="開啟導覽">☰ <span>MENU</span></summary><nav aria-label="頁面導覽"><a href="#/">主頁 HOME</a><a href="#/practice">練習 TOPICS</a><a href="#/library/books">錯題庫 ARCHIVE</a><a href="#/library/papers">批改卷 PAPERS</a><a href="#/records">記錄 RECORDS</a><a href="./ios-widget.html">iOS 小組件 WIDGET</a><button type="button" id="compactReset">重設本輪進度</button></nav></details>
 <div class="content-scroll" id="contentScroll">
 <main class="app" id="app" tabindex="-1">
-  <section class="home"><div class="hero">
-    <div class="hero-kicker">DSE · 錯題本</div>
-    <h1 class="hero-title">Kyle 嘅錯題本</h1>
-    <p class="hero-sub" id="startupStatus" role="status">正在載入題庫…</p>
-    <a class="btn btn-primary" href="./">重新載入主頁</a>
-  </div></section>
+  <section class="page startup"><span class="eyebrow">DSE / 學習手冊</span><h1>把不懂的，慢慢弄懂。</h1><p id="startupStatus" role="status">正在準備你的學習空間…</p><a class="btn btn-ghost" href="./">重新載入</a></section>
 </main>
+<footer class="site-footer"><span>拾題 · 一次弄懂一點。</span><span>所有日期以北京時間（UTC+8）顯示</span></footer>
 </div>
-
-<!-- 手機底部標籤欄 -->
 <nav class="tabbar" id="tabbar" aria-label="手機主要導覽">
-  <a class="tab-item" href="#/" data-route="home">
-    <span class="tab-ico"><span class="persona-icon persona-icon-home" aria-hidden="true"></span></span><span class="tab-label">主頁</span>
-  </a>
-  <a class="tab-item" href="#/practice" data-route="practice">
-    <span class="tab-ico"><span class="persona-icon persona-icon-practice" aria-hidden="true"></span></span><span class="tab-label">練習</span>
-  </a>
-  <a class="tab-item" href="#/library/books" data-route="library">
-    <span class="tab-ico"><span class="persona-icon persona-icon-library" aria-hidden="true"></span></span><span class="tab-label">錯題庫</span>
-  </a>
-  <a class="tab-item" href="#/library/papers" data-route="papers"><span class="tab-ico"><span class="persona-icon persona-icon-papers" aria-hidden="true"></span></span><span class="tab-label">批改卷</span></a>
-  <a class="tab-item" href="#/records" data-route="records">
-    <span class="tab-ico"><span class="persona-icon persona-icon-records" aria-hidden="true"></span></span><span class="tab-label">記錄</span>
-  </a>
+  <a class="tab-item" href="#/" data-route="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v15H4zM8 3v4m8-4v4M4 10h16m-11 4h2m2 0h2m-6 3h2"/></svg><span>今日</span></a>
+  <a class="tab-item" href="#/practice" data-route="practice"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 16-1 5 5-1L21 7l-4-4L4 16Zm0 0 4 4M14 6l4 4"/></svg><span>練習</span></a>
+  <a class="tab-item" href="#/library/books" data-route="library"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6C8 3 5 4 3 5v15c3-2 6-2 9 0 3-2 6-2 9 0V5c-2-1-5-2-9 1Zm0 0v14"/></svg><span>錯題本</span></a>
+  <a class="tab-item" href="#/library/papers" data-route="papers"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10l4 4v14H5zM14 3v5h5M8 12h8m-8 4h5"/></svg><span>批改卷</span></a>
+  <a class="tab-item" href="#/records" data-route="records"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h17M7 17v-5m5 5V7m5 10V3"/></svg><span>記錄</span></a>
 </nav>
-
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-
-<script>document.getElementById("compactReset").addEventListener("click", function(){ document.getElementById("compactNav").open=false; document.getElementById("railReset").click(); }); document.querySelectorAll("#compactNav a").forEach(function(a){ a.addEventListener("click", function(){document.getElementById("compactNav").open=false;});});</script>
-<script>window.QUIZ_SYNC_API="https://snowy-cake-a0a7.3355718646.workers.dev";</script>
-<script>
-window.addEventListener('error', function () {
-  var status = document.getElementById('startupStatus');
-  if (status) status.textContent = '頁面未能載入，請重新載入主頁。你的做題記錄仍然保留。';
-});
-</script>
-<script>window.QUIZ_PRIVATE_BANK=true;</script>
-<script>window.QUIZ_PASSWORD_AUTH=true;</script>
+<script>window.QUIZ_SYNC_API="https://snowy-cake-a0a7.3355718646.workers.dev";window.QUIZ_PRIVATE_BANK=true;window.QUIZ_PASSWORD_AUTH=true;window.addEventListener('error',function(){var s=document.getElementById('startupStatus');if(s)s.textContent='頁面未能載入，請重新載入。本機記錄與草稿仍然保留。';});</script>
 <script defer src="subject-config.js?v=account-subjects-20261023"></script>
+<script defer src="notebook.js?v=notebook-20261111"></script>
 <script defer src="study-experience.js?v=study-20261102"></script>
-<script defer src="library.js?v=marking-20261103"></script>
-<script defer src="paper-reader.js?v=study-20261102"></script>
-<script defer src="home-scenes.js?v=home-scenes-20261107"></script>
-<script defer src="app.js?v=home-scenes-20261107"></script>
+<script defer src="library.js?v=notebook-20261111"></script>
+<script defer src="paper-reader.js?v=notebook-20261111"></script>
+<script defer src="app.js?v=notebook-20261111"></script>
 </body>
 </html>
-
