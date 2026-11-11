@@ -36,7 +36,7 @@
   if (window.QUIZ_DEMO) {
     var demo = document.createElement('div'); demo.className = 'demo-banner';
     demo.innerHTML = '<span><b>模擬演示</b> · 題目、原卷與記錄均為合成資料，不會連接私人資料。</span><label>切換體驗帳戶 <select id="demoAccount"><option value="kyle">Kyle</option><option value="yeelam">Yeelam</option></select></label><a href="../">正式網站 ↗</a>';
-    document.querySelector('.site-header').after(demo);
+    document.getElementById('contentScroll').prepend(demo);
     document.getElementById('demoAccount').value = user;
     document.getElementById('demoAccount').addEventListener('change', function (event) {
       storage.setItem('dse_quiz_user_v1', event.target.value); location.href = location.pathname + '#/'; location.reload();
