@@ -48,7 +48,7 @@ node --test *.test.mjs sync-worker/worker.test.mjs
 python3 -B tests/redesign_browser.py --suite all --screenshots
 ```
 
-輸出位於系統暫存目錄的 `dse-redesign-browser/`。測試自建只提供公開原始碼和合成資料的 loopback 服務，拒絕外網及私人目錄。CI 的 Playwright 僅用來安裝 Chromium 二進位檔，再執行同一支標準庫測試。舊的 `tests/experience_browser.py` 與舊主題資產留作歷史參考，不是新介面的驗收或載入相依。
+輸出位於系統暫存目錄的 `dse-redesign-browser/`。測試自建只提供公開原始碼和合成資料的 loopback 服務，拒絕外網及私人目錄。CI 直接使用 Ubuntu runner 已內置的 Chrome 執行同一支標準庫測試，無需額外下載 Playwright 或透過 apt 安裝瀏覽器依賴。舊的 `tests/experience_browser.py` 與舊主題資產留作歷史參考，不是新介面的驗收或載入相依。
 
 演示版的答案、草稿與模擬同步以 `dse_demo_` 為儲存前綴；不會接觸正式版資料。沒有預先填入的練習成績，所有示例題、原答及試卷均明確標記為模擬。
 
